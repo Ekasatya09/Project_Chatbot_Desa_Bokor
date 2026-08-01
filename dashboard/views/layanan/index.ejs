@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kelola Layanan - Dashboard Chatbot Desa</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+  <% if (admin.adminId) { %>
+    <!-- Navbar -->
+    <nav class="navbar">
+      <div class="container">
+        <div class="navbar-brand">
+          <h1>🏛️ Dashboard Chatbot Desa</h1>
+        </div>
+        <ul class="navbar-menu">
+          <li><a href="/">Dashboard</a></li>
+          <li><a href="/layanan" class="active">Layanan</a></li>
+          <li><a href="/riwayat">Riwayat Chat</a></li>
+          <li><a href="/statistik">Statistik</a></li>
+        </ul>
+        <div class="navbar-user">
+          <span>👤 <%= admin.adminNama || admin.adminUsername %></span>
+          <a href="/logout" class="btn-logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+    <% } %>
+
+      <main class="main-content">
+        <div class="container">
+          <div class="page-header">
+            <div>
+              <h2>Kelola Layanan</h2>
+              <p class="subtitle">Daftar layanan administrasi desa yang tersedia di chatbot</p>
+            </div>
+            <a href="/layanan/tambah" class="btn btn-primary">+ Tambah Layanan</a>
+          </div>
+
+          <!-- Alert Messages -->
+          <% if (typeof success !=='undefined' ) { %>
+            <div class="alert alert-success">
+              <% if (success==='tambah' ) { %>
+                ✅ Layanan berhasil ditambahkan!
+                <% } else if (success==='edit' ) { %>
+                  ✅ Layanan berhasil diperbarui!
+                  <% } else if (success==='hapus' ) { %>
+                    ✅ Layanan berhasil dihapus!
+                    <% } %>
+            </div>
+            <% } %>
+
+              <% if (typeof error !=='undefined' ) { %>
+                <div class="alert alert-error">
+                  ❌ Terjadi kesalahan. Silakan coba lagi.
+                </div>
+                <% } %>
+
+                  <!-- Tabel Layanan -->
+                  <% if (layananList.length> 0) { %>
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th width="5%">No</th>
+                          <th width="45%">Nama Layanan</th>
+                          <th width="15%">Jumlah Syarat</th>
+                          <th width="20%">Terakhir Diubah</th>
+                          <th width="15%">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <% layananList.forEach((layanan, index)=> { %>
+                          <tr>
+                            <td>
+                              <%= index + 1 %>
+                            </td>
+                            <td><strong>
+                                <%= layanan.nama %>
+                              </strong></td>
+                            <td>
+                              <%= layanan.jumlah_syarat %> syarat
+                            </td>
+                            <td>
+                              <%= new Date(layanan.updated_at).toLocaleDateString('id-ID') %>
+                            </td>
+                            <td>
+                              <div class="action-buttons">
+                                <a href="/layanan/edit/<%= layanan.id %>" class="btn btn-sm btn-secondary">Edit</a>
+                                <form action="/layanan/hapus/<%= layanan.id %>" method="POST" style="display: inline;"
+                                  onsubmit="return confirm('Yakin ingin menghapus layanan ini?')">
+                                  <button type="submit" class="btn btn-sm btn-danger">Hapus</button>
+                                </form>
+                              </div>
+                            </td>
+                          </tr>
+                          <% }); %>
+                      </tbody>
+                    </table>
+                    <% } else { %>
+                      <div class="empty-state">
+                        <p>📋 Belum ada layanan yang terdaftar.</p>
+                        <a href="/layanan/tambah" class="btn btn-primary">Tambah Layanan Pertama</a>
+                      </div>
+                      <% } %>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <div class="container">
+          <p>&copy; 2026 Chatbot Administrasi Desa. All rights reserved.</p>
+        </div>
+      </footer>
+
+      <script>
+        // Parse URL params untuk menampilkan alert
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('success') || urlParams.has('error')) {
+          // Scroll to top untuk melihat alert
+          window.scrollTo(0, 0);
+        }
+      </script>
+</body>
+
+</html>

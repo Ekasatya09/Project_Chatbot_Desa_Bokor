@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Statistik - Dashboard Chatbot Desa</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+  <% if (admin.adminId) { %>
+    <!-- Navbar -->
+    <nav class="navbar">
+      <div class="container">
+        <div class="navbar-brand">
+          <h1>🏛️ Dashboard Chatbot Desa</h1>
+        </div>
+        <ul class="navbar-menu">
+          <li><a href="/">Dashboard</a></li>
+          <li><a href="/layanan">Layanan</a></li>
+          <li><a href="/riwayat">Riwayat Chat</a></li>
+          <li><a href="/statistik" class="active">Statistik</a></li>
+        </ul>
+        <div class="navbar-user">
+          <span>👤 <%= admin.adminNama || admin.adminUsername %></span>
+          <a href="/logout" class="btn-logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+    <% } %>
+
+      <main class="main-content">
+        <div class="container">
+          <h2>Statistik Penggunaan Bot</h2>
+          <p class="subtitle">Analisis dan insight penggunaan chatbot</p>
+
+          <!-- Stat Cards -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">👥</div>
+              <div class="stat-info">
+                <h3>
+                  <%= totalUnikWA %>
+                </h3>
+                <p>Unique Users (WA)</p>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon">📋</div>
+              <div class="stat-info">
+                <h3>
+                  <%= statsPerLayanan.length %>
+                </h3>
+                <p>Total Layanan</p>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon">🔥</div>
+              <div class="stat-info">
+                <% if (statsPerLayanan.length> 0) { %>
+                  <h3>
+                    <%= statsPerLayanan[0].jumlah_pertanyaan %>
+                  </h3>
+                  <p>Layanan Terpopuler</p>
+                  <% } else { %>
+                    <h3>0</h3>
+                    <p>Layanan Terpopuler</p>
+                    <% } %>
+              </div>
+            </div>
+          </div>
+
+          <!-- Statistik Per Layanan -->
+          <div class="section">
+            <h3>📊 Statistik Per Layanan</h3>
+            <% if (statsPerLayanan.length> 0) { %>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th width="5%">No</th>
+                    <th width="35%">Nama Layanan</th>
+                    <th width="15%">Jumlah Pertanyaan</th>
+                    <th width="20%">Pertama Ditanya</th>
+                    <th width="20%">Terakhir Ditanya</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% statsPerLayanan.forEach((stat, index)=> { %>
+                    <tr>
+                      <td>
+                        <%= index + 1 %>
+                      </td>
+                      <td><strong>
+                          <%= stat.nama %>
+                        </strong></td>
+                      <td>
+                        <strong>
+                          <%= stat.jumlah_pertanyaan %>
+                        </strong>
+                        <% if (stat.jumlah_pertanyaan> 0) { %>
+                          <div class="progress-bar">
+                            <div class="progress-fill"
+                              style="width: <%= (stat.jumlah_pertanyaan / statsPerLayanan[0].jumlah_pertanyaan * 100) %>%">
+                            </div>
+                          </div>
+                          <% } %>
+                      </td>
+                      <td>
+                        <% if (stat.pertama_ditanya) { %>
+                          <%= new Date(stat.pertama_ditanya).toLocaleDateString('id-ID') %>
+                            <% } else { %>
+                              <span class="text-muted">-</span>
+                              <% } %>
+                      </td>
+                      <td>
+                        <% if (stat.terakhir_ditanya) { %>
+                          <%= new Date(stat.terakhir_ditanya).toLocaleDateString('id-ID') %>
+                            <% } else { %>
+                              <span class="text-muted">-</span>
+                              <% } %>
+                      </td>
+                    </tr>
+                    <% }); %>
+                </tbody>
+              </table>
+              <% } else { %>
+                <p class="text-muted">Belum ada data statistik layanan.</p>
+                <% } %>
+          </div>
+
+          <!-- Statistik Per Hari (7 Hari Terakhir) -->
+          <div class="section">
+            <h3>📅 Aktivitas 7 Hari Terakhir</h3>
+            <% if (statsPerHari.length> 0) { %>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th width="50%">Tanggal</th>
+                    <th width="50%">Jumlah Percakapan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% statsPerHari.forEach(stat=> { %>
+                    <tr>
+                      <td>
+                        <%= new Date(stat.tanggal).toLocaleDateString('id-ID', { weekday: 'long' , year: 'numeric' ,
+                          month: 'long' , day: 'numeric' }) %>
+                      </td>
+                      <td>
+                        <strong>
+                          <%= stat.jumlah %>
+                        </strong> percakapan
+                        <div class="progress-bar">
+                          <div class="progress-fill"
+                            style="width: <%= (stat.jumlah / Math.max(...statsPerHari.map(s => s.jumlah)) * 100) %>%">
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    <% }); %>
+                </tbody>
+              </table>
+              <% } else { %>
+                <p class="text-muted">Belum ada aktivitas dalam 7 hari terakhir.</p>
+                <% } %>
+          </div>
+
+          <!-- Insight -->
+          <div class="insight-box">
+            <h4>💡 Insight</h4>
+            <ul>
+              <% if (statsPerLayanan.length> 0 && statsPerLayanan[0].jumlah_pertanyaan > 0) { %>
+                <li>Layanan <strong>"<%= statsPerLayanan[0].nama %>"</strong> adalah yang paling banyak ditanyakan
+                  dengan <%= statsPerLayanan[0].jumlah_pertanyaan %> pertanyaan.</li>
+                <% } %>
+
+                  <% if (statsPerHari.length> 0) { %>
+                    <li>Total aktivitas dalam 7 hari terakhir: <strong>
+                        <%= statsPerHari.reduce((sum, s)=> sum + s.jumlah, 0) %>
+                      </strong> percakapan.</li>
+                    <% } %>
+
+                      <li>Chatbot telah melayani <strong>
+                          <%= totalUnikWA %>
+                        </strong> nomor WhatsApp yang berbeda.</li>
+            </ul>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <div class="container">
+          <p>&copy; 2026 Chatbot Administrasi Desa. All rights reserved.</p>
+        </div>
+      </footer>
+</body>
+
+</html>

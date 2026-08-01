@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - Chatbot Desa</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+  <% if (admin.adminId) { %>
+    <!-- Navbar -->
+    <nav class="navbar">
+      <div class="container">
+        <div class="navbar-brand">
+          <h1>🏛️ Dashboard Chatbot Desa</h1>
+        </div>
+        <ul class="navbar-menu">
+          <li><a href="/" class="active">Dashboard</a></li>
+          <li><a href="/layanan">Layanan</a></li>
+          <li><a href="/riwayat">Riwayat Chat</a></li>
+          <li><a href="/statistik">Statistik</a></li>
+        </ul>
+        <div class="navbar-user">
+          <span>👤 <%= admin.adminNama || admin.adminUsername %></span>
+          <a href="/logout" class="btn-logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+    <% } %>
+
+      <main class="main-content">
+        <div class="container">
+          <h2>Dashboard Utama</h2>
+          <p class="subtitle">Selamat datang di dashboard admin chatbot administrasi desa</p>
+
+          <!-- Stats Cards -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">📋</div>
+              <div class="stat-info">
+                <h3>
+                  <%= stats.totalLayanan %>
+                </h3>
+                <p>Total Layanan</p>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon">💬</div>
+              <div class="stat-info">
+                <h3>
+                  <%= stats.totalChat %>
+                </h3>
+                <p>Total Percakapan</p>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon">📅</div>
+              <div class="stat-info">
+                <h3>
+                  <%= stats.totalChatHariIni %>
+                </h3>
+                <p>Chat Hari Ini</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Layanan -->
+          <div class="section">
+            <h3>📊 Top 5 Layanan Paling Banyak Ditanya</h3>
+            <% if (stats.topLayanan.length> 0) { %>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>No</th>
+                    <th>Nama Layanan</th>
+                    <th>Jumlah Pertanyaan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% stats.topLayanan.forEach((item, index)=> { %>
+                    <tr>
+                      <td>
+                        <%= index + 1 %>
+                      </td>
+                      <td>
+                        <%= item.nama %>
+                      </td>
+                      <td><strong>
+                          <%= item.jumlah %>
+                        </strong></td>
+                    </tr>
+                    <% }); %>
+                </tbody>
+              </table>
+              <% } else { %>
+                <p class="text-muted">Belum ada data pertanyaan.</p>
+                <% } %>
+          </div>
+
+          <!-- Chat Terbaru -->
+          <div class="section">
+            <h3>💬 Percakapan Terbaru</h3>
+            <% if (stats.chatTerbaru.length> 0) { %>
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Waktu</th>
+                    <th>Nomor WA</th>
+                    <th>Pesan</th>
+                    <th>Layanan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% stats.chatTerbaru.forEach(chat=> { %>
+                    <tr>
+                      <td>
+                        <%= new Date(chat.waktu).toLocaleString('id-ID') %>
+                      </td>
+                      <td>
+                        <%= chat.nomor_wa.replace('@s.whatsapp.net', '' ) %>
+                      </td>
+                      <td class="text-truncate">
+                        <%= chat.pesan_masuk %>
+                      </td>
+                      <td>
+                        <% if (chat.layanan_nama) { %>
+                          <span class="badge">
+                            <%= chat.layanan_nama %>
+                          </span>
+                          <% } else { %>
+                            <span class="text-muted">-</span>
+                            <% } %>
+                      </td>
+                    </tr>
+                    <% }); %>
+                </tbody>
+              </table>
+              <div class="text-center">
+                <a href="/riwayat" class="btn btn-secondary">Lihat Semua Riwayat</a>
+              </div>
+              <% } else { %>
+                <p class="text-muted">Belum ada percakapan.</p>
+                <% } %>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <div class="container">
+          <p>&copy; 2026 Chatbot Administrasi Desa. All rights reserved.</p>
+        </div>
+      </footer>
+</body>
+
+</html>

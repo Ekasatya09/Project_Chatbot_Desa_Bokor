@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>
+    <%= mode==='tambah' ? 'Tambah' : 'Edit' %> Layanan - Dashboard Chatbot Desa
+  </title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+  <% if (admin.adminId) { %>
+    <!-- Navbar -->
+    <nav class="navbar">
+      <div class="container">
+        <div class="navbar-brand">
+          <h1>🏛️ Dashboard Chatbot Desa</h1>
+        </div>
+        <ul class="navbar-menu">
+          <li><a href="/">Dashboard</a></li>
+          <li><a href="/layanan" class="active">Layanan</a></li>
+          <li><a href="/riwayat">Riwayat Chat</a></li>
+          <li><a href="/statistik">Statistik</a></li>
+        </ul>
+        <div class="navbar-user">
+          <span>👤 <%= admin.adminNama || admin.adminUsername %></span>
+          <a href="/logout" class="btn-logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+    <% } %>
+
+      <main class="main-content">
+        <div class="container">
+          <div class="page-header">
+            <div>
+              <h2>
+                <%= mode==='tambah' ? 'Tambah' : 'Edit' %> Layanan
+              </h2>
+              <p class="subtitle">
+                <a href="/layanan">← Kembali ke Daftar Layanan</a>
+              </p>
+            </div>
+          </div>
+
+          <div class="form-container">
+            <form action="<%= mode === 'tambah' ? '/layanan/tambah' : '/layanan/edit/' + layanan.id %>" method="POST"
+              id="formLayanan">
+              <!-- Nama Layanan -->
+              <div class="form-group">
+                <label for="nama">Nama Layanan *</label>
+                <input type="text" id="nama" name="nama" value="<%= layanan ? layanan.nama : '' %>" required
+                  placeholder="Contoh: Akta Kelahiran">
+              </div>
+
+              <!-- Syarat-syarat -->
+              <div class="form-group">
+                <label>Syarat-syarat yang Dibutuhkan</label>
+                <p class="help-text">Tambahkan syarat satu per satu. Klik "Tambah Syarat" untuk menambah baris baru.</p>
+
+                <div id="syaratContainer">
+                  <% if (syaratList && syaratList.length> 0) { %>
+                    <% syaratList.forEach((syarat, index)=> { %>
+                      <div class="syarat-item">
+                        <span class="syarat-number">
+                          <%= index + 1 %>.
+                        </span>
+                        <input type="text" name="syarat[]" value="<%= syarat.deskripsi %>" placeholder="Masukkan syarat"
+                          required>
+                        <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
+                      </div>
+                      <% }); %>
+                        <% } else { %>
+                          <div class="syarat-item">
+                            <span class="syarat-number">1.</span>
+                            <input type="text" name="syarat[]" placeholder="Masukkan syarat" required>
+                            <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
+                          </div>
+                          <% } %>
+                </div>
+
+                <button type="button" class="btn btn-secondary" onclick="tambahSyarat()">
+                  + Tambah Syarat
+                </button>
+              </div>
+
+              <!-- Submit Buttons -->
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                  <%= mode==='tambah' ? '✅ Simpan Layanan' : '💾 Update Layanan' %>
+                </button>
+                <a href="/layanan" class="btn btn-secondary">Batal</a>
+              </div>
+            </form>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <div class="container">
+          <p>&copy; 2026 Chatbot Administrasi Desa. All rights reserved.</p>
+        </div>
+      </footer>
+
+      <script>
+        let syaratCount = document.querySelectorAll('.syarat-item').length;
+
+        function tambahSyarat() {
+          syaratCount++;
+          const container = document.getElementById('syaratContainer');
+          const div = document.createElement('div');
+          div.className = 'syarat-item';
+          div.innerHTML = `
+        <span class="syarat-number">${syaratCount}.</span>
+        <input 
+          type="text" 
+          name="syarat[]" 
+          placeholder="Masukkan syarat"
+          required
+        >
+        <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
+      `;
+          container.appendChild(div);
+          updateNomor();
+        }
+
+        function hapusSyarat(button) {
+          const syaratItems = document.querySelectorAll('.syarat-item');
+          if (syaratItems.length > 1) {
+            button.parentElement.remove();
+            updateNomor();
+          } else {
+            alert('Minimal harus ada 1 syarat!');
+          }
+        }
+
+        function updateNomor() {
+          const items = document.querySelectorAll('.syarat-item');
+          items.forEach((item, index) => {
+            item.querySelector('.syarat-number').textContent = (index + 1) + '.';
+          });
+          syaratCount = items.length;
+        }
+
+        // Validasi form sebelum submit
+        document.getElementById('formLayanan').addEventListener('submit', function (e) {
+          const inputs = document.querySelectorAll('input[name="syarat[]"]');
+          let valid = true;
+
+          inputs.forEach(input => {
+            if (!input.value.trim()) {
+              valid = false;
+            }
+          });
+
+          if (!valid) {
+            e.preventDefault();
+            alert('Semua field syarat harus diisi atau dihapus!');
+          }
+        });
+      </script>
+</body>
+
+</html>
