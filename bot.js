@@ -18,10 +18,14 @@ const __dirname = path.dirname(__filename);
 const FOLDER_AUTH = './auth_info';
 const DB_PATH = path.join(__dirname, 'db', 'desa.db');
 const SIMILARITY_THRESHOLD = 0.6; // Ambang batas similarity (0-1), di atas ini dianggap cocok
+const LIVE_CHAT_EXPIRE_HOURS = 24; // Durasi sesi live chat (jam)
 
 // Penyimpanan sesi user (di memori)
-// Key: nomor WA, Value: { state: 'menu' }
+// Key: nomor WA, Value: { state, kategoriList, layananList, layananDipilih }
 const sesiUser = new Map();
+
+// Referensi socket global (untuk kiriman balasan dari interval)
+let sockGlobal = null;
 
 // Koneksi database
 let db;
@@ -46,54 +50,79 @@ function initDatabase() {
 }
 
 /**
- * Membaca semua layanan dari database
- * @returns {Array} Array objek layanan dengan syarat
+ * Membaca semua kategori dari database
+ * @returns {Array} Array { id, nama, layananList[] }
  */
-function bacaDataLayanan() {
+function bacaDataKategori() {
   try {
-    // Ambil semua layanan
-    const layananList = db.prepare('SELECT id, nama FROM layanan ORDER BY id').all();
+    const kategoriList = db.prepare(
+      'SELECT id, nama FROM kategori ORDER BY urutan, nama'
+    ).all();
 
-    // Untuk setiap layanan, ambil syarat-syaratnya
-    const stmtSyarat = db.prepare(
-      'SELECT deskripsi FROM syarat WHERE layanan_id = ? ORDER BY urutan'
+    const stmtLayanan = db.prepare(
+      'SELECT id, nama FROM layanan WHERE kategori_id = ? ORDER BY nama'
     );
 
-    const hasil = layananList.map(layanan => ({
-      id: layanan.id,
-      nama: layanan.nama,
-      syarat: stmtSyarat.all(layanan.id).map(s => s.deskripsi)
+    return kategoriList.map(k => ({
+      id: k.id,
+      nama: k.nama,
+      layananList: stmtLayanan.all(k.id)
     }));
-
-    return hasil;
   } catch (error) {
-    console.error('❌ Gagal membaca data layanan:', error.message);
+    console.error('❌ Gagal membaca kategori:', error.message);
     return [];
   }
 }
 
 /**
- * Mencari layanan berdasarkan ID
+ * Membaca detail layanan (syarat + sub-opsi)
  * @param {number} id - ID layanan
- * @returns {Object|null} Objek layanan dengan syarat
+ * @returns {Object|null}
  */
-function cariLayananById(id) {
+function bacaDetailLayanan(id) {
   try {
     const layanan = db.prepare('SELECT id, nama FROM layanan WHERE id = ?').get(id);
     if (!layanan) return null;
 
-    const syaratList = db.prepare(
+    const syarat = db.prepare(
       'SELECT deskripsi FROM syarat WHERE layanan_id = ? ORDER BY urutan'
+    ).all(id).map(s => s.deskripsi);
+
+    const subOpsiRows = db.prepare(
+      'SELECT id, nama FROM sub_opsi WHERE layanan_id = ? ORDER BY urutan'
     ).all(id);
 
-    return {
-      id: layanan.id,
-      nama: layanan.nama,
-      syarat: syaratList.map(s => s.deskripsi)
-    };
+    const stmtSyaratSub = db.prepare(
+      'SELECT deskripsi FROM syarat_sub_opsi WHERE sub_opsi_id = ? ORDER BY urutan'
+    );
+
+    const subOpsi = subOpsiRows.map(so => ({
+      id: so.id,
+      nama: so.nama,
+      syarat: stmtSyaratSub.all(so.id).map(s => s.deskripsi)
+    }));
+
+    return { id: layanan.id, nama: layanan.nama, syarat, subOpsi };
   } catch (error) {
-    console.error('❌ Gagal mencari layanan:', error.message);
+    console.error('❌ Gagal membaca detail layanan:', error.message);
     return null;
+  }
+}
+
+/**
+ * Membaca semua layanan (tanpa kategori) — backward compat
+ */
+function bacaDataLayanan() {
+  try {
+    return db.prepare('SELECT id, nama FROM layanan ORDER BY nama').all().map(l => {
+      const syarat = db.prepare(
+        'SELECT deskripsi FROM syarat WHERE layanan_id = ? ORDER BY urutan'
+      ).all(l.id).map(s => s.deskripsi);
+      return { id: l.id, nama: l.nama, syarat };
+    });
+  } catch (error) {
+    console.error('❌ Gagal membaca data layanan:', error.message);
+    return [];
   }
 }
 
@@ -115,6 +144,107 @@ function simpanLogChat(nomorWa, pesanMasuk, balasanBot, layananId = null) {
   }
 }
 
+// ===== FUNGSI LIVE CHAT =====
+
+/**
+ * Ambil nomor WA admin dari database
+ * @returns {string|null}
+ */
+function getAdminNomor() {
+  try {
+    const admin = db.prepare('SELECT nomor_wa FROM admin WHERE nomor_wa IS NOT NULL AND nomor_wa != "" LIMIT 1').get();
+    if (!admin) return null;
+    // Format ke format Baileys: 628xxx@s.whatsapp.net
+    let nomor = admin.nomor_wa.replace(/\D/g, '');
+    if (!nomor.startsWith('62')) nomor = '62' + nomor.replace(/^0/, '');
+    return nomor + '@s.whatsapp.net';
+  } catch { return null; }
+}
+
+/**
+ * Cek sesi live chat aktif milik user
+ * @param {string} nomorWa
+ * @returns {Object|null}
+ */
+function cekSesiAktif(nomorWa) {
+  try {
+    return db.prepare(
+      "SELECT * FROM sesi_live_chat WHERE nomor_wa = ? AND status = 'aktif'"
+    ).get(nomorWa);
+  } catch { return null; }
+}
+
+/**
+ * Buat sesi live chat baru
+ * @param {string} nomorWa
+ * @returns {number} ID sesi
+ */
+function buatSesiLiveChat(nomorWa) {
+  // Hapus sesi lama yang mungkin sudah expired
+  db.prepare("DELETE FROM sesi_live_chat WHERE nomor_wa = ? AND status != 'aktif'").run(nomorWa);
+  const result = db.prepare(`
+    INSERT OR REPLACE INTO sesi_live_chat (nomor_wa, status, mulai_at, expired_at)
+    VALUES (?, 'aktif', CURRENT_TIMESTAMP, datetime('now', '+${LIVE_CHAT_EXPIRE_HOURS} hours'))
+  `).run(nomorWa);
+  return result.lastInsertRowid;
+}
+
+/**
+ * Akhiri sesi live chat
+ * @param {string} nomorWa
+ */
+function akhiriSesiLiveChat(nomorWa) {
+  db.prepare(`
+    UPDATE sesi_live_chat
+    SET status = 'selesai', selesai_at = CURRENT_TIMESTAMP
+    WHERE nomor_wa = ? AND status = 'aktif'
+  `).run(nomorWa);
+}
+
+/**
+ * Simpan log pesan live chat
+ * @param {number} sesiId
+ * @param {'masuk'|'keluar'} arah
+ * @param {string} isi
+ */
+function simpanPesanLive(sesiId, arah, isi) {
+  try {
+    db.prepare(
+      'INSERT INTO pesan_live_chat (sesi_id, arah, isi) VALUES (?, ?, ?)'
+    ).run(sesiId, arah, isi);
+  } catch (e) {
+    console.error('❌ Gagal simpan pesan live chat:', e.message);
+  }
+}
+
+/**
+ * Ambil semua nomor user yang punya sesi live chat aktif
+ * @returns {Array<string>}
+ */
+function getSesiAktifList() {
+  try {
+    return db.prepare("SELECT nomor_wa FROM sesi_live_chat WHERE status = 'aktif'").all().map(r => r.nomor_wa);
+  } catch { return []; }
+}
+
+/**
+ * Ambil user yang paling terakhir mengirim pesan dalam sesi aktif
+ * @returns {string|null} nomor_wa user
+ */
+function getUserLiveChatTerakhir() {
+  try {
+    const row = db.prepare(`
+      SELECT s.nomor_wa
+      FROM sesi_live_chat s
+      JOIN pesan_live_chat p ON p.sesi_id = s.id
+      WHERE s.status = 'aktif' AND p.arah = 'masuk'
+      ORDER BY p.waktu DESC
+      LIMIT 1
+    `).get();
+    return row ? row.nomor_wa : null;
+  } catch { return null; }
+}
+
 /**
  * Normalisasi teks untuk pencocokan
  * Menghapus karakter spesial, spasi berlebih, dan lowercase
@@ -127,6 +257,20 @@ function normalisasiTeks(teks) {
     .replace(/[^a-z0-9\s]/g, '') // Hapus karakter spesial
     .replace(/\s+/g, ' ') // Ganti multiple spaces jadi satu
     .trim();
+}
+
+/**
+ * Bersihkan nomor WA dari suffix Baileys (@s.whatsapp.net, @lid, dll)
+ * Baileys v6+ kadang menyimpan nomor dengan format @lid (Linked ID)
+ * @param {string} nomor
+ * @returns {string}
+ */
+function bersihkanNomor(nomor) {
+  if (!nomor) return '';
+  return nomor
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/@lid$/, '')
+    .replace(/@c\.us$/, '');
 }
 
 /**
@@ -179,38 +323,83 @@ function cariLayananByNama(inputUser, daftarLayanan) {
 // ===== FUNGSI UTILITY =====
 
 /**
- * Membuat teks daftar menu layanan
- * @param {Array} layanan - Array objek layanan
- * @returns {string} Teks menu bernomor
+ * Membuat teks menu kategori
  */
-function buatTeksMenu(layanan) {
-  let teks = '📋 *LAYANAN ADMINISTRASI DESA*\n\n';
-  teks += 'Silakan pilih layanan yang Anda butuhkan dengan mengetik nomornya:\n\n';
-
-  layanan.forEach((item, index) => {
-    teks += `${index + 1}. ${item.nama}\n`;
+function buatTeksMenuKategori(kategoriList) {
+  let teks = '🏛️ *LAYANAN ADMINISTRASI DESA*\n\n';
+  teks += 'Silakan pilih *kategori* layanan dengan mengetik nomornya:\n\n';
+  kategoriList.forEach((k, i) => {
+    teks += `${i + 1}. ${k.nama} (${k.layananList.length} layanan)\n`;
   });
+  teks += '\n────────────────────────────';
+  teks += '\n9️⃣8️⃣  Chat langsung dengan admin';
+  teks += '\n────────────────────────────';
+  teks += '\n💡 _Ketik "menu" kapan saja untuk kembali ke sini_';
+  return teks;
+}
 
-  teks += '\n💡 _Ketik "menu" kapan saja untuk kembali ke daftar ini_';
-  teks += '\n💡 _Atau ketik nama layanan langsung (contoh: "akta kelahiran")_';
+
+/**
+ * Membuat teks menu layanan dalam satu kategori
+ */
+function buatTeksMenuLayanan(kategori, layananList) {
+  let teks = `📂 *${kategori.nama.toUpperCase()}*\n\n`;
+  teks += 'Pilih layanan yang Anda butuhkan:\n\n';
+  layananList.forEach((l, i) => {
+    teks += `${i + 1}. ${l.nama}\n`;
+  });
+  teks += '\n────────────────────────────';
+  teks += '\n0️⃣  Kembali ke daftar kategori';
+  teks += '\n💡 _Ketik "menu" untuk ke menu utama_';
+  return teks;
+}
+
+/**
+ * Membuat teks menu sub-opsi
+ */
+function buatTeksMenuSubOpsi(layanan, subOpsi) {
+  let teks = `📄 *${layanan.nama.toUpperCase()}*\n\n`;
+  teks += 'Layanan ini memiliki beberapa jenis. Pilih yang sesuai:\n\n';
+  subOpsi.forEach((so, i) => {
+    teks += `${i + 1}. ${so.nama}\n`;
+  });
+  teks += '\n────────────────────────────';
+  teks += '\n0️⃣  Kembali ke daftar layanan';
+  teks += '\n💡 _Ketik "menu" untuk ke menu utama_';
   return teks;
 }
 
 /**
  * Membuat teks detail syarat layanan
- * @param {Object} layanan - Objek layanan terpilih
- * @returns {string} Teks detail syarat
  */
-function buatTeksDetailLayanan(layanan) {
-  let teks = `📄 *${layanan.nama.toUpperCase()}*\n\n`;
-  teks += '✅ *Syarat yang diperlukan:*\n\n';
+function buatTeksDetailLayanan(layanan, subOpsi = null) {
+  let teks = `📄 *${layanan.nama.toUpperCase()}`;
+  if (subOpsi) teks += ` — ${subOpsi.nama}`;
+  teks += '*\n\n';
 
-  layanan.syarat.forEach((syarat, index) => {
-    teks += `${index + 1}. ${syarat}\n`;
-  });
+  // Syarat umum
+  const syaratUmum = layanan.syarat || [];
+  const syaratKhusus = subOpsi ? (subOpsi.syarat || []) : [];
+
+  if (syaratUmum.length > 0 && syaratKhusus.length > 0) {
+    teks += '✅ *Syarat Umum:*\n';
+    syaratUmum.forEach((s, i) => { teks += `${i + 1}. ${s}\n`; });
+    teks += '\n✅ *Syarat Tambahan:*\n';
+    syaratKhusus.forEach((s, i) => { teks += `${i + 1}. ${s}\n`; });
+  } else {
+    const semuaSyarat = [...syaratUmum, ...syaratKhusus];
+    if (semuaSyarat.length > 0) {
+      teks += '✅ *Syarat yang diperlukan:*\n';
+      semuaSyarat.forEach((s, i) => { teks += `${i + 1}. ${s}\n`; });
+    } else {
+      teks += '_Tidak ada syarat khusus. Silakan tanya ke kantor desa._\n';
+    }
+  }
 
   teks += '\n📍 Silakan datang ke kantor desa dengan membawa dokumen di atas.\n';
-  teks += '\n💡 _Ketik "menu" untuk kembali ke daftar layanan_';
+  teks += '\n────────────────────────────';
+  teks += '\n0️⃣  Kembali ke pilihan sebelumnya';
+  teks += '\n💡 _Ketik "menu" untuk kembali ke menu utama_';
   return teks;
 }
 
@@ -219,6 +408,103 @@ function buatTeksDetailLayanan(layanan) {
  * @param {Object} sock - Socket koneksi Baileys
  * @param {Object} pesan - Objek pesan dari Baileys
  */
+/**
+ * Proses pesan dari admin WA (relay ke user / akhiri sesi)
+ */
+async function prosesAdminMessage(sock, nomorAdmin, isiPesan) {
+  const pesanTrim = isiPesan.trim();
+
+  // ── Perintah: !selesai [opsional: nomor user] ─────────────────
+  if (pesanTrim.toLowerCase().startsWith('!selesai')) {
+    const parts = pesanTrim.split(' ');
+    let targetNomor = parts[1] ? parts[1].replace(/\D/g, '') : null;
+
+    let sesiList;
+    if (targetNomor) {
+      // Akhiri sesi nomor tertentu
+      if (!targetNomor.startsWith('62')) targetNomor = '62' + targetNomor.replace(/^0/, '');
+      targetNomor = targetNomor + '@s.whatsapp.net';
+      sesiList = [{ nomor_wa: targetNomor }];
+    } else {
+      // Akhiri semua sesi aktif
+      sesiList = getSesiAktifList().map(n => ({ nomor_wa: n }));
+    }
+
+    if (sesiList.length === 0) {
+      await sock.sendMessage(nomorAdmin, { text: '⚠️ Tidak ada sesi live chat yang aktif.' });
+      return;
+    }
+
+    for (const { nomor_wa } of sesiList) {
+      akhiriSesiLiveChat(nomor_wa);
+      sesiUser.delete(nomor_wa);
+      // Beritahu user
+      await sock.sendMessage(nomor_wa, {
+        text: '✅ Sesi chat dengan admin telah selesai. Terima kasih!\n\n💡 Ketik *menu* untuk kembali ke menu utama.'
+      });
+      console.log(`🔴 Sesi live chat ${nomor_wa} diakhiri oleh admin`);
+    }
+    await sock.sendMessage(nomorAdmin, { text: `✅ ${sesiList.length} sesi live chat telah diakhiri.` });
+    return;
+  }
+
+  // ── Forward pesan admin ke user ───────────────────────────────
+  // Cari user yang terakhir mengirim pesan
+  let targetUser = getUserLiveChatTerakhir();
+
+  // Jika tidak ada pesan masuk sama sekali, ambil sesi pertama yang ada
+  if (!targetUser) {
+    const sesiAktif = getSesiAktifList();
+    if (sesiAktif.length > 0) targetUser = sesiAktif[0];
+  }
+
+  if (!targetUser) {
+    await sock.sendMessage(nomorAdmin, { text: '⚠️ Tidak ada sesi live chat aktif. Pesan tidak diteruskan.' });
+    return;
+  }
+
+  // Kirim ke user
+  await sock.sendMessage(targetUser, { text: `👤 *Admin:* ${isiPesan}` });
+
+  // Simpan log
+  const sesi = cekSesiAktif(targetUser);
+  if (sesi) simpanPesanLive(sesi.id, 'keluar', isiPesan);
+
+  console.log(`📤 Pesan admin diteruskan ke ${targetUser}`);
+}
+
+/**
+ * Cek & akhiri sesi live chat yang sudah expired (dipanggil via setInterval)
+ */
+async function cekSesiExpired(sock) {
+  try {
+    const expiredList = db.prepare(`
+      SELECT nomor_wa FROM sesi_live_chat
+      WHERE status = 'aktif' AND expired_at <= datetime('now')
+    `).all();
+
+    for (const { nomor_wa } of expiredList) {
+      akhiriSesiLiveChat(nomor_wa);
+      sesiUser.delete(nomor_wa);
+      await sock.sendMessage(nomor_wa, {
+        text: '⏰ Sesi chat dengan admin telah berakhir (batas waktu 24 jam).\n\n💡 Ketik *menu* untuk kembali ke menu utama.'
+      });
+      console.log(`⏰ Sesi live chat ${nomor_wa} expired otomatis`);
+    }
+
+    if (expiredList.length > 0) {
+      const adminNomor = getAdminNomor();
+      if (adminNomor) {
+        await sock.sendMessage(adminNomor, {
+          text: `⏰ ${expiredList.length} sesi live chat telah berakhir otomatis (timeout 24 jam).`
+        });
+      }
+    }
+  } catch (e) {
+    console.error('❌ Error cek sesi expired:', e.message);
+  }
+}
+
 async function prosesPesan(sock, pesan) {
   try {
     // Ambil informasi pesan
@@ -247,10 +533,22 @@ async function prosesPesan(sock, pesan) {
 
     const pesanLowerCase = isiPesan.trim().toLowerCase();
 
-    // Baca data layanan dari database
-    const daftarLayanan = bacaDataLayanan();
+    // ── Deteksi pesan dari Admin WA ──────────────────────────────
+    const adminNomor = getAdminNomor();
+    if (adminNomor && nomorPengirim === adminNomor) {
+      await prosesAdminMessage(sock, nomorPengirim, isiPesan);
+      await sock.sendPresenceUpdate('paused', nomorPengirim);
+      return;
+    }
 
-    if (daftarLayanan.length === 0) {
+    // Baca kategori
+    const kategoriList = bacaDataKategori();
+    const pakaiKategori = kategoriList.length > 0;
+
+    // Jika tidak ada kategori sama sekali, fallback ke mode lama (flat list)
+    const daftarLayananFlat = !pakaiKategori ? bacaDataLayanan() : [];
+
+    if (pakaiKategori && kategoriList.every(k => k.layananList.length === 0)) {
       const balasan = '⚠️ Maaf, data layanan belum tersedia. Silakan hubungi admin.';
       await sock.sendMessage(nomorPengirim, { text: balasan });
       await sock.sendPresenceUpdate('paused', nomorPengirim);
@@ -258,78 +556,309 @@ async function prosesPesan(sock, pesan) {
       return;
     }
 
-    // Cek apakah user meminta menu atau ini pesan pertama
-    if (pesanLowerCase === 'menu' || !sesiUser.has(nomorPengirim)) {
-      // Kirim menu dan set state
-      const teksMenu = buatTeksMenu(daftarLayanan);
+    // ── Reset / menu utama ────────────────────────────────────────
+    const isFirstMessage = !sesiUser.has(nomorPengirim);
+    if (pesanLowerCase === 'menu' || isFirstMessage) {
+      let teksMenu;
+      if (pakaiKategori) {
+        teksMenu = buatTeksMenuKategori(kategoriList);
+        sesiUser.set(nomorPengirim, { state: 'pilih_kategori', kategoriList });
+      } else {
+        teksMenu = buatTeksMenu(daftarLayananFlat);
+        sesiUser.set(nomorPengirim, { state: 'menu', layananList: daftarLayananFlat });
+      }
       await sock.sendMessage(nomorPengirim, { text: teksMenu });
-
-      // Kirim status "tidak sedang mengetik" setelah pesan terkirim
       await sock.sendPresenceUpdate('paused', nomorPengirim);
-
-      sesiUser.set(nomorPengirim, { state: 'menu' });
       simpanLogChat(nomorPengirim, isiPesan, teksMenu, null);
       console.log(`📨 Menu dikirim ke ${nomorPengirim}`);
       return;
     }
 
+    // ── Cek sesi live chat aktif (user yang sudah dalam sesi) ───
+    const sesiLive = cekSesiAktif(nomorPengirim);
+    if (sesiLive) {
+      // Pastikan state di memori juga live_chat
+      if (!sesiUser.has(nomorPengirim) || sesiUser.get(nomorPengirim).state !== 'live_chat') {
+        sesiUser.set(nomorPengirim, { state: 'live_chat' });
+      }
+    }
+
     // Ambil sesi user
     const sesi = sesiUser.get(nomorPengirim);
+    const pilihanAngka = parseInt(isiPesan.trim());
+    const kirimBalasan = async (teks, layananId = null) => {
+      await sock.sendMessage(nomorPengirim, { text: teks });
+      await sock.sendPresenceUpdate('paused', nomorPengirim);
+      simpanLogChat(nomorPengirim, isiPesan, teks, layananId);
+    };
 
-    // Proses berdasarkan state
-    if (sesi.state === 'menu') {
-      // User sedang di menu, cek apakah pilihan valid
-      const pilihanAngka = parseInt(isiPesan.trim());
+    // ── Pilihan 98: Minta live chat dengan admin (semua state) ──
+    if (pesanLowerCase === '98') {
+      const sesiAktifAda = cekSesiAktif(nomorPengirim);
+      if (sesiAktifAda) {
+        await kirimBalasan('💬 Anda sudah dalam sesi chat dengan admin. Silakan lanjutkan percakapan, atau ketik *menu* jika ingin keluar.');
+      } else {
+        // Buat sesi baru
+        const sesiId = buatSesiLiveChat(nomorPengirim);
+        sesiUser.set(nomorPengirim, { state: 'live_chat' });
 
-      // Coba parsing angka dulu
-      if (!isNaN(pilihanAngka) && pilihanAngka >= 1 && pilihanAngka <= daftarLayanan.length) {
-        // Pilihan angka valid, kirim detail layanan
-        const layananDipilih = daftarLayanan[pilihanAngka - 1];
-        const teksDetail = buatTeksDetailLayanan(layananDipilih);
-        await sock.sendMessage(nomorPengirim, { text: teksDetail });
+        // Beritahu user
+        await kirimBalasan(
+          '✅ Permintaan Anda telah diterima.\n\n' +
+          '👤 Admin akan segera merespons. Silakan ketik pesan Anda sekarang.\n\n' +
+          '💡 Sesi ini aktif selama *24 jam*. Ketik *menu* jika ingin membatalkan.'
+        );
 
-        // Kirim status "tidak sedang mengetik" setelah pesan terkirim
+        // Notifikasi ke admin WA
+        const adminWA = getAdminNomor();
+        if (adminWA) {
+          const nomorBersih = bersihkanNomor(nomorPengirim);
+          await sock.sendMessage(adminWA, {
+            text:
+              `🔔 *Permintaan Live Chat Masuk*\n\n` +
+              `👤 Nomor: +${nomorBersih}\n` +
+              `🕐 Waktu: ${new Date().toLocaleString('id-ID')}\n\n` +
+              `Balas pesan ini untuk merespons pengguna.\n` +
+              `Ketik *!selesai* untuk mengakhiri sesi.`
+          });
+          console.log(`🔔 Notifikasi live chat dikirim ke admin (${adminWA})`);
+        } else {
+          console.warn('⚠️ Nomor WA admin belum dikonfigurasi! Set di dashboard: /live-chat');
+        }
+
+        simpanPesanLive(sesiId, 'masuk', '[Mulai sesi live chat]');
+        console.log(`💬 Sesi live chat baru: ${nomorPengirim}`);
+      }
+      await sock.sendPresenceUpdate('paused', nomorPengirim);
+      return;
+    }
+
+    // ── State: live_chat ───────────────────────────────────────────
+    if (sesi && sesi.state === 'live_chat') {
+      const sesiLiveAktif = cekSesiAktif(nomorPengirim);
+
+      // Jika user ketik "menu" → keluar dari live chat
+      if (pesanLowerCase === 'menu') {
+        akhiriSesiLiveChat(nomorPengirim);
+        sesiUser.delete(nomorPengirim);
+        // Beritahu admin
+        const adminWA = getAdminNomor();
+        if (adminWA) {
+          const nomorBersih = bersihkanNomor(nomorPengirim);
+          await sock.sendMessage(adminWA, {
+            text: `ℹ️ Pengguna +${nomorBersih} telah keluar dari sesi live chat.`
+          });
+        }
+        // Lanjut ke handler menu (jangan return, biarkan jatuh ke handler menu di bawah)
+      } else if (sesiLiveAktif) {
+        // Forward pesan user ke admin
+        const adminWA = getAdminNomor();
+        if (adminWA) {
+          const nomorBersih = bersihkanNomor(nomorPengirim);
+          await sock.sendMessage(adminWA, {
+            text: `💬 *[${nomorBersih}]:* ${isiPesan}`
+          });
+        }
+        simpanPesanLive(sesiLiveAktif.id, 'masuk', isiPesan);
+        // Kirim konfirmasi terima ke user (opsional, bisa dinonaktifkan)
         await sock.sendPresenceUpdate('paused', nomorPengirim);
+        console.log(`💬 Pesan user ${nomorPengirim} diteruskan ke admin`);
+        return;
+      } else {
+        // Sesi sudah tidak aktif tapi state masih live_chat (misal: expired)
+        sesiUser.delete(nomorPengirim);
+        await kirimBalasan('⏰ Sesi live chat Anda telah berakhir.\n\n💡 Ketik *menu* untuk kembali ke menu utama.');
+        await sock.sendPresenceUpdate('paused', nomorPengirim);
+        return;
+      }
+    }
 
-        simpanLogChat(nomorPengirim, isiPesan, teksDetail, layananDipilih.id);
-        console.log(`✅ Detail layanan "${layananDipilih.nama}" dikirim ke ${nomorPengirim}`);
+    // ── State: pilih_kategori ──────────────────────────────────────
+    if (sesi && sesi.state === 'pilih_kategori') {
+      const list = sesi.kategoriList;
+      if (!isNaN(pilihanAngka) && pilihanAngka >= 1 && pilihanAngka <= list.length) {
+        const kategoriDipilih = list[pilihanAngka - 1];
+        const teks = buatTeksMenuLayanan(kategoriDipilih, kategoriDipilih.layananList);
+        sesiUser.set(nomorPengirim, {
+          state: 'pilih_layanan',
+          kategoriList,
+          kategoriDipilih,
+          layananList: kategoriDipilih.layananList
+        });
+        await kirimBalasan(teks);
+        console.log(`📂 Kategori "${kategoriDipilih.nama}" dipilih oleh ${nomorPengirim}`);
+      } else {
+        // Coba fuzzy match nama kategori
+        const namaList = list.map(k => normalisasiTeks(k.nama));
+        const match = stringSimilarity.findBestMatch(normalisasiTeks(isiPesan), namaList);
+        if (match.bestMatch.rating >= SIMILARITY_THRESHOLD) {
+          const kategoriDipilih = list[match.bestMatchIndex];
+          const teks = buatTeksMenuLayanan(kategoriDipilih, kategoriDipilih.layananList);
+          sesiUser.set(nomorPengirim, {
+            state: 'pilih_layanan', kategoriList,
+            kategoriDipilih, layananList: kategoriDipilih.layananList
+          });
+          await kirimBalasan(teks);
+        } else {
+          const balasan = `❌ Pilihan tidak dikenali.\n\n` + buatTeksMenuKategori(list);
+          await kirimBalasan(balasan);
+        }
+      }
+      return;
+    }
+
+    // ── State: pilih_layanan ───────────────────────────────────────
+    if (sesi && sesi.state === 'pilih_layanan') {
+      const list = sesi.layananList;
+
+      // Ketik 0 → kembali ke kategori
+      if (pilihanAngka === 0) {
+        const teks = buatTeksMenuKategori(kategoriList);
+        sesiUser.set(nomorPengirim, { state: 'pilih_kategori', kategoriList });
+        await kirimBalasan(teks);
         return;
       }
 
-      // Jika bukan angka valid, coba cocokkan dengan nama layanan (typo-tolerant)
-      const hasil = cariLayananByNama(isiPesan, daftarLayanan);
-
-      if (hasil) {
-        // Ada layanan yang cocok!
-        const layananDipilih = hasil.layanan;
-        const teksDetail = buatTeksDetailLayanan(layananDipilih);
-
-        // Tambahkan info jika pencocokan otomatis
-        let balasan = teksDetail;
-        if (hasil.score < 1.0) {
-          balasan = `💡 _Mungkin maksud Anda: "${layananDipilih.nama}"_\n\n` + teksDetail;
-        }
-
-        await sock.sendMessage(nomorPengirim, { text: balasan });
-
-        // Kirim status "tidak sedang mengetik" setelah pesan terkirim
-        await sock.sendPresenceUpdate('paused', nomorPengirim);
-
-        simpanLogChat(nomorPengirim, isiPesan, balasan, layananDipilih.id);
-        console.log(`✅ Detail layanan "${layananDipilih.nama}" dikirim ke ${nomorPengirim} (typo-tolerant, score: ${hasil.score.toFixed(2)})`);
+      let layananDipilihRaw = null;
+      if (!isNaN(pilihanAngka) && pilihanAngka >= 1 && pilihanAngka <= list.length) {
+        layananDipilihRaw = list[pilihanAngka - 1];
       } else {
-        // Tidak ada yang cocok, tampilkan error
-        const teksError = `❌ Pilihan tidak dikenali: "${isiPesan}"\n\n`;
-        const teksHint = `💡 Silakan ketik nomor layanan (1-${daftarLayanan.length}) atau nama layanan.\n\n`;
-        const teksMenu = buatTeksMenu(daftarLayanan);
-        const balasan = teksError + teksHint + teksMenu;
+        const namaList = list.map(l => normalisasiTeks(l.nama));
+        const match = stringSimilarity.findBestMatch(normalisasiTeks(isiPesan), namaList);
+        if (match.bestMatch.rating >= SIMILARITY_THRESHOLD) {
+          layananDipilihRaw = list[match.bestMatchIndex];
+        }
+      }
 
-        await sock.sendMessage(nomorPengirim, { text: balasan });
+      if (!layananDipilihRaw) {
+        const balasan = `❌ Pilihan tidak dikenali.\n\n` +
+          buatTeksMenuLayanan(sesi.kategoriDipilih, list);
+        await kirimBalasan(balasan);
+        return;
+      }
 
-        // Kirim status "tidak sedang mengetik" setelah pesan terkirim
-        await sock.sendPresenceUpdate('paused', nomorPengirim);
+      // Load detail layanan (syarat + sub-opsi)
+      const layananDetail = bacaDetailLayanan(layananDipilihRaw.id);
+      if (!layananDetail) {
+        await kirimBalasan('⚠️ Layanan tidak ditemukan. Ketik "menu" untuk kembali.');
+        return;
+      }
 
-        simpanLogChat(nomorPengirim, isiPesan, balasan, null);
+      if (layananDetail.subOpsi.length > 0) {
+        // Ada sub-opsi → tanya dulu
+        const teks = buatTeksMenuSubOpsi(layananDetail, layananDetail.subOpsi);
+        sesiUser.set(nomorPengirim, {
+          state: 'pilih_sub_opsi', kategoriList,
+          kategoriDipilih: sesi.kategoriDipilih,
+          layananList: list,
+          layananDipilih: layananDetail
+        });
+        await kirimBalasan(teks, layananDetail.id);
+        console.log(`🔀 Sub-opsi "${layananDetail.nama}" ditampilkan ke ${nomorPengirim}`);
+      } else {
+        // Langsung tampilkan syarat
+        const teks = buatTeksDetailLayanan(layananDetail);
+        sesiUser.set(nomorPengirim, {
+          state: 'lihat_syarat',
+          kategoriList,
+          kategoriDipilih: sesi.kategoriDipilih,
+          layananList: list,
+          layananDipilih: layananDetail
+        });
+        await kirimBalasan(teks, layananDetail.id);
+        console.log(`✅ Syarat "${layananDetail.nama}" dikirim ke ${nomorPengirim}`);
+      }
+      return;
+    }
+
+    // ── State: pilih_sub_opsi ──────────────────────────────────────
+    if (sesi && sesi.state === 'pilih_sub_opsi') {
+      const layanan = sesi.layananDipilih;
+      const subOpsiList = layanan.subOpsi;
+
+      // Ketik 0 → kembali ke daftar layanan
+      if (pilihanAngka === 0) {
+        const teks = buatTeksMenuLayanan(sesi.kategoriDipilih, sesi.layananList);
+        sesiUser.set(nomorPengirim, {
+          state: 'pilih_layanan', kategoriList,
+          kategoriDipilih: sesi.kategoriDipilih,
+          layananList: sesi.layananList
+        });
+        await kirimBalasan(teks);
+        return;
+      }
+
+      let subOpsiDipilih = null;
+      if (!isNaN(pilihanAngka) && pilihanAngka >= 1 && pilihanAngka <= subOpsiList.length) {
+        subOpsiDipilih = subOpsiList[pilihanAngka - 1];
+      } else {
+        const namaList = subOpsiList.map(so => normalisasiTeks(so.nama));
+        const match = stringSimilarity.findBestMatch(normalisasiTeks(isiPesan), namaList);
+        if (match.bestMatch.rating >= SIMILARITY_THRESHOLD) {
+          subOpsiDipilih = subOpsiList[match.bestMatchIndex];
+        }
+      }
+
+      if (!subOpsiDipilih) {
+        const balasan = `❌ Pilihan tidak dikenali.\n\n` + buatTeksMenuSubOpsi(layanan, subOpsiList);
+        await kirimBalasan(balasan, layanan.id);
+        return;
+      }
+
+      const teks = buatTeksDetailLayanan(layanan, subOpsiDipilih);
+      sesiUser.set(nomorPengirim, {
+        state: 'lihat_syarat',
+        kategoriList,
+        kategoriDipilih: sesi.kategoriDipilih,
+        layananList: sesi.layananList,
+        layananDipilih: layanan
+      });
+      await kirimBalasan(teks, layanan.id);
+      console.log(`✅ Syarat sub-opsi "${subOpsiDipilih.nama}" dari "${layanan.nama}" dikirim ke ${nomorPengirim}`);
+      return;
+    }
+
+    // ── State: lihat_syarat ────────────────────────────────────────
+    if (sesi && sesi.state === 'lihat_syarat') {
+      // Ketik 0 → kembali ke daftar layanan
+      if (pilihanAngka === 0) {
+        const teks = buatTeksMenuLayanan(sesi.kategoriDipilih, sesi.layananList);
+        sesiUser.set(nomorPengirim, {
+          state: 'pilih_layanan',
+          kategoriList,
+          kategoriDipilih: sesi.kategoriDipilih,
+          layananList: sesi.layananList
+        });
+        await kirimBalasan(teks);
+        return;
+      }
+      // Input lain → ingatkan user untuk ketik 0 atau menu
+      const balasan = `💡 Ketik *0* untuk kembali ke daftar layanan, atau ketik *"menu"* untuk ke menu utama.`;
+      await kirimBalasan(balasan);
+      return;
+    }
+
+    // ── Fallback: flat menu (jika tidak ada kategori) ─────────────
+    if (sesi && sesi.state === 'menu') {
+      const list = sesi.layananList || daftarLayananFlat;
+      if (!isNaN(pilihanAngka) && pilihanAngka >= 1 && pilihanAngka <= list.length) {
+        const layananDipilih = list[pilihanAngka - 1];
+        const detail = bacaDetailLayanan(layananDipilih.id) || layananDipilih;
+        const teks = buatTeksDetailLayanan(detail);
+        await kirimBalasan(teks, layananDipilih.id);
+        console.log(`✅ Detail layanan "${layananDipilih.nama}" dikirim ke ${nomorPengirim}`);
+        return;
+      }
+      const hasil = cariLayananByNama(isiPesan, list);
+      if (hasil) {
+        const detail = bacaDetailLayanan(hasil.layanan.id) || hasil.layanan;
+        let balasan = buatTeksDetailLayanan(detail);
+        if (hasil.score < 1.0) balasan = `💡 _Mungkin maksud Anda: "${hasil.layanan.nama}"_\n\n` + balasan;
+        await kirimBalasan(balasan, hasil.layanan.id);
+        console.log(`✅ Detail layanan "${hasil.layanan.nama}" dikirim (typo, score: ${hasil.score.toFixed(2)})`);
+      } else {
+        const balasan = `❌ Pilihan tidak dikenali: "${isiPesan}"\n\n💡 Silakan ketik nomornya.\n\n` + buatTeksMenu(list);
+        await kirimBalasan(balasan);
         console.log(`⚠️ Pilihan tidak dikenali dari ${nomorPengirim}: "${isiPesan}"`);
       }
     }
@@ -386,6 +915,10 @@ async function jalankanBot() {
     } else if (connection === 'open') {
       console.log('✅ Bot berhasil terhubung ke WhatsApp!');
       console.log('🤖 Chatbot Administrasi Desa siap menerima pesan...\n');
+      // Simpan referensi socket global untuk fitur live chat
+      sockGlobal = sock;
+      // Mulai interval cek sesi expired (setiap 60 detik)
+      setInterval(() => cekSesiExpired(sock), 60 * 1000);
     }
   });
 

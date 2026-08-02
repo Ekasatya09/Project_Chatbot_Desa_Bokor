@@ -370,6 +370,11 @@ h2 {
   transition: border-color 0.2s;
 }
 
+.form-group input::placeholder,
+.form-group textarea::placeholder {
+  color: #9ca3af;
+}
+
 .form-group input:focus,
 .form-group textarea:focus,
 .form-group select:focus {

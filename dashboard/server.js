@@ -3,8 +3,11 @@ import session from 'express-session';
 import bodyParser from 'body-parser';
 import Database from 'better-sqlite3';
 import bcrypt from 'bcrypt';
+import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import QRCode from 'qrcode';
+import { startBot, stopBot, resetBot, getBotStatus, getQrString, getWaNomor } from '../bot-core.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +33,53 @@ app.use(session({
   cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 jam
 }));
 
+// CORS untuk frontend React Native Web (dev server terpisah)
+const DEV_ORIGIN = process.env.DASHBOARD_DEV_ORIGIN || 'http://localhost:8081';
+app.use(cors({
+  origin: DEV_ORIGIN.split(',').map((o) => o.trim()),
+  credentials: true
+}));
+
+// ===== ROUTES: STATIC REACT NATIVE WEB (production) =====
+// Jika build web dari mobile/ sudah diexport ke mobile/dist, sajikan di sini.
+// Blok ini diletakkan SEBELUM route EJS agar RN Web build menang di production.
+// Jika build tidak ada, dashboard EJS lama tetap berfungsi sebagai fallback.
+const MOBILE_WEB_DIST = path.join(__dirname, '..', 'mobile', 'dist');
+
+try {
+  const fs = await import('fs');
+  if (fs.existsSync(MOBILE_WEB_DIST)) {
+    app.use(express.static(MOBILE_WEB_DIST));
+
+    // Peta route → file HTML statis hasil expo export
+    const staticHtml = {
+      '/': 'index.html',
+      '/login': 'login.html',
+      '/layanan': 'layanan.html',
+      '/layanan/tambah': 'layanan.html',
+      '/riwayat': 'riwayat.html',
+      '/statistik': 'statistik.html'
+    };
+
+    // Fallback SPA: route yang tidak dikenal diarahkan ke file HTML yang sesuai
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api')) return next();
+
+      // Dynamic route /layanan/:id → layanan/[id].html
+      const layananMatch = req.path.match(/^\/layanan\/(\d+)$/);
+      if (layananMatch) {
+        return res.sendFile(path.join(MOBILE_WEB_DIST, 'layanan', '[id].html'));
+      }
+
+      const htmlFile = staticHtml[req.path] || 'index.html';
+      res.sendFile(path.join(MOBILE_WEB_DIST, htmlFile));
+    });
+    console.log('📱 React Native Web build ditemukan, disajikan dari mobile/dist');
+  }
+} catch (error) {
+  console.warn('⚠️ Gagal memuat mobile/dist:', error.message);
+}
+
 // ===== INISIALISASI DATABASE =====
 let db;
 try {
@@ -42,12 +92,36 @@ try {
   process.exit(1);
 }
 
+// ===== UTILITY =====
+/**
+ * Bersihkan nomor WA dari suffix Baileys (@s.whatsapp.net, @lid, dll)
+ * Baileys v6+ kadang menyimpan nomor dengan format @lid (Linked ID)
+ * @param {string} nomor
+ * @returns {string}
+ */
+function bersihkanNomor(nomor) {
+  if (!nomor) return '';
+  return nomor
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/@lid$/, '')
+    .replace(/@c\.us$/, '');
+}
+
 // ===== MIDDLEWARE AUTHENTICATION =====
 function requireAuth(req, res, next) {
   if (req.session.adminId) {
     next();
   } else {
     res.redirect('/login');
+  }
+}
+
+// Auth untuk API JSON (mengembalikan 401, bukan redirect)
+function apiAuth(req, res, next) {
+  if (req.session.adminId) {
+    next();
+  } else {
+    res.status(401).json({ error: 'Tidak terautentikasi. Silakan login.' });
   }
 }
 
@@ -366,17 +440,544 @@ app.get('/statistik', requireAuth, (req, res) => {
   });
 });
 
+// ===== ROUTES: API JSON (untuk React Native Web) =====
+
+// Login API
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+
+  const admin = db.prepare('SELECT * FROM admin WHERE username = ?').get(username);
+
+  if (!admin) {
+    return res.status(401).json({ error: 'Username tidak ditemukan' });
+  }
+
+  const passwordValid = bcrypt.compareSync(password || '', admin.password_hash);
+
+  if (!passwordValid) {
+    return res.status(401).json({ error: 'Password salah' });
+  }
+
+  // Set session
+  req.session.adminId = admin.id;
+  req.session.adminUsername = admin.username;
+  req.session.adminNama = admin.nama_lengkap;
+
+  // Update last login
+  db.prepare('UPDATE admin SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(admin.id);
+
+  res.json({
+    admin: {
+      id: admin.id,
+      username: admin.username,
+      nama_lengkap: admin.nama_lengkap
+    }
+  });
+});
+
+// Logout API
+app.post('/api/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.json({ ok: true });
+  });
+});
+
+// Info admin saat ini
+app.get('/api/me', apiAuth, (req, res) => {
+  res.json({
+    admin: {
+      id: req.session.adminId,
+      username: req.session.adminUsername,
+      nama_lengkap: req.session.adminNama
+    }
+  });
+});
+
+// Statistik dashboard utama
+app.get('/api/stats', apiAuth, (req, res) => {
+  const totalLayanan = db.prepare('SELECT COUNT(*) as total FROM layanan').get().total;
+  const totalChat = db.prepare('SELECT COUNT(*) as total FROM log_chat').get().total;
+  const totalChatHariIni = db.prepare(
+    "SELECT COUNT(*) as total FROM log_chat WHERE DATE(waktu) = DATE('now')"
+  ).get().total;
+
+  const topLayanan = db.prepare(`
+    SELECT l.nama, COUNT(lc.id) as jumlah
+    FROM layanan l
+    LEFT JOIN log_chat lc ON l.id = lc.layanan_id
+    WHERE lc.layanan_id IS NOT NULL
+    GROUP BY l.id
+    ORDER BY jumlah DESC
+    LIMIT 5
+  `).all();
+
+  const chatTerbaru = db.prepare(`
+    SELECT
+      lc.id,
+      lc.nomor_wa,
+      lc.pesan_masuk,
+      lc.waktu,
+      l.nama as layanan_nama
+    FROM log_chat lc
+    LEFT JOIN layanan l ON lc.layanan_id = l.id
+    ORDER BY lc.waktu DESC
+    LIMIT 10
+  `).all().map((chat) => ({
+    ...chat,
+    nomor_wa: bersihkanNomor(chat.nomor_wa)
+  }));
+
+  res.json({
+    totalLayanan,
+    totalChat,
+    totalChatHariIni,
+    topLayanan,
+    chatTerbaru
+  });
+});
+
+// ── Kategori ─────────────────────────────────────────────────────────────────
+
+// Daftar semua kategori + jumlah layanan
+app.get('/api/kategori', apiAuth, (req, res) => {
+  const list = db.prepare(`
+    SELECT k.*, COUNT(l.id) as jumlah_layanan
+    FROM kategori k
+    LEFT JOIN layanan l ON l.kategori_id = k.id
+    GROUP BY k.id
+    ORDER BY k.urutan, k.nama
+  `).all();
+  res.json({ kategoriList: list });
+});
+
+// Tambah kategori
+app.post('/api/kategori', apiAuth, (req, res) => {
+  const { nama, urutan } = req.body || {};
+  if (!nama || !nama.trim()) return res.status(400).json({ error: 'Nama kategori wajib diisi' });
+  try {
+    const result = db.prepare('INSERT INTO kategori (nama, urutan) VALUES (?, ?)').run(nama.trim(), urutan ?? 0);
+    res.status(201).json({ id: result.lastInsertRowid });
+  } catch (error) {
+    console.error('Error tambah kategori:', error);
+    res.status(500).json({ error: 'Gagal menambah kategori' });
+  }
+});
+
+// Edit kategori
+app.put('/api/kategori/:id', apiAuth, (req, res) => {
+  const { nama, urutan } = req.body || {};
+  if (!nama || !nama.trim()) return res.status(400).json({ error: 'Nama kategori wajib diisi' });
+  try {
+    db.prepare('UPDATE kategori SET nama = ?, urutan = ? WHERE id = ?').run(nama.trim(), urutan ?? 0, req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error edit kategori:', error);
+    res.status(500).json({ error: 'Gagal mengedit kategori' });
+  }
+});
+
+// Hapus kategori
+app.delete('/api/kategori/:id', apiAuth, (req, res) => {
+  try {
+    // Null-kan kategori_id pada layanan yang ada
+    db.prepare('UPDATE layanan SET kategori_id = NULL WHERE kategori_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM kategori WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error hapus kategori:', error);
+    res.status(500).json({ error: 'Gagal menghapus kategori' });
+  }
+});
+
+// ── Layanan ───────────────────────────────────────────────────────────────────
+
+// Daftar layanan (dengan kategori + jumlah sub_opsi)
+app.get('/api/layanan', apiAuth, (req, res) => {
+  const layananList = db.prepare(`
+    SELECT
+      l.*,
+      COUNT(DISTINCT s.id)  AS jumlah_syarat,
+      COUNT(DISTINCT so.id) AS jumlah_sub_opsi,
+      k.nama                AS kategori_nama
+    FROM layanan l
+    LEFT JOIN syarat   s  ON l.id = s.layanan_id
+    LEFT JOIN sub_opsi so ON l.id = so.layanan_id
+    LEFT JOIN kategori k  ON l.kategori_id = k.id
+    GROUP BY l.id
+    ORDER BY k.urutan, k.nama, l.nama
+  `).all();
+  res.json({ layananList });
+});
+
+// Detail layanan + syarat + sub_opsi beserta syaratnya
+app.get('/api/layanan/:id', apiAuth, (req, res) => {
+  const layanan = db.prepare('SELECT * FROM layanan WHERE id = ?').get(req.params.id);
+  if (!layanan) return res.status(404).json({ error: 'Layanan tidak ditemukan' });
+
+  const syaratList = db.prepare(
+    'SELECT * FROM syarat WHERE layanan_id = ? ORDER BY urutan'
+  ).all(req.params.id);
+
+  const subOpsiList = db.prepare(
+    'SELECT * FROM sub_opsi WHERE layanan_id = ? ORDER BY urutan'
+  ).all(req.params.id);
+
+  const stmtSyaratSub = db.prepare(
+    'SELECT * FROM syarat_sub_opsi WHERE sub_opsi_id = ? ORDER BY urutan'
+  );
+
+  const subOpsiWithSyarat = subOpsiList.map((so) => ({
+    ...so,
+    syaratList: stmtSyaratSub.all(so.id),
+  }));
+
+  res.json({ layanan, syaratList, subOpsiList: subOpsiWithSyarat });
+});
+
+// Tambah layanan
+app.post('/api/layanan', apiAuth, (req, res) => {
+  const { nama, kategori_id, syarat, sub_opsi } = req.body || {};
+  if (!nama || !nama.trim()) return res.status(400).json({ error: 'Nama layanan wajib diisi' });
+
+  try {
+    db.transaction(() => {
+      const layananId = db.prepare(
+        'INSERT INTO layanan (nama, kategori_id) VALUES (?, ?)'
+      ).run(nama.trim(), kategori_id || null).lastInsertRowid;
+
+      // Syarat umum
+      if (Array.isArray(syarat)) {
+        const ins = db.prepare('INSERT INTO syarat (layanan_id, deskripsi, urutan) VALUES (?, ?, ?)');
+        syarat.forEach((d, i) => { if (d && d.trim()) ins.run(layananId, d.trim(), i + 1); });
+      }
+
+      // Sub-opsi
+      if (Array.isArray(sub_opsi)) {
+        const insSO = db.prepare('INSERT INTO sub_opsi (layanan_id, nama, urutan) VALUES (?, ?, ?)');
+        const insSS = db.prepare('INSERT INTO syarat_sub_opsi (sub_opsi_id, deskripsi, urutan) VALUES (?, ?, ?)');
+        sub_opsi.forEach((so, i) => {
+          if (!so.nama || !so.nama.trim()) return;
+          const soId = insSO.run(layananId, so.nama.trim(), i + 1).lastInsertRowid;
+          if (Array.isArray(so.syaratList)) {
+            so.syaratList.forEach((d, j) => { if (d && d.trim()) insSS.run(soId, d.trim(), j + 1); });
+          }
+        });
+      }
+
+      res.status(201).json({ id: layananId });
+    })();
+  } catch (error) {
+    console.error('Error tambah layanan:', error);
+    res.status(500).json({ error: 'Gagal menambah layanan' });
+  }
+});
+
+// Edit layanan
+app.put('/api/layanan/:id', apiAuth, (req, res) => {
+  const { nama, kategori_id, syarat, sub_opsi } = req.body || {};
+  const layananId = req.params.id;
+  if (!nama || !nama.trim()) return res.status(400).json({ error: 'Nama layanan wajib diisi' });
+
+  try {
+    db.transaction(() => {
+      db.prepare('UPDATE layanan SET nama = ?, kategori_id = ? WHERE id = ?').run(nama.trim(), kategori_id || null, layananId);
+
+      // Syarat umum — replace
+      db.prepare('DELETE FROM syarat WHERE layanan_id = ?').run(layananId);
+      if (Array.isArray(syarat)) {
+        const ins = db.prepare('INSERT INTO syarat (layanan_id, deskripsi, urutan) VALUES (?, ?, ?)');
+        syarat.forEach((d, i) => { if (d && d.trim()) ins.run(layananId, d.trim(), i + 1); });
+      }
+
+      // Sub-opsi — replace all
+      db.prepare('DELETE FROM sub_opsi WHERE layanan_id = ?').run(layananId);
+      if (Array.isArray(sub_opsi)) {
+        const insSO = db.prepare('INSERT INTO sub_opsi (layanan_id, nama, urutan) VALUES (?, ?, ?)');
+        const insSS = db.prepare('INSERT INTO syarat_sub_opsi (sub_opsi_id, deskripsi, urutan) VALUES (?, ?, ?)');
+        sub_opsi.forEach((so, i) => {
+          if (!so.nama || !so.nama.trim()) return;
+          const soId = insSO.run(layananId, so.nama.trim(), i + 1).lastInsertRowid;
+          if (Array.isArray(so.syaratList)) {
+            so.syaratList.forEach((d, j) => { if (d && d.trim()) insSS.run(soId, d.trim(), j + 1); });
+          }
+        });
+      }
+    })();
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error edit layanan:', error);
+    res.status(500).json({ error: 'Gagal mengedit layanan' });
+  }
+});
+
+// Hapus layanan
+app.delete('/api/layanan/:id', apiAuth, (req, res) => {
+  try {
+    db.prepare('DELETE FROM layanan WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error hapus layanan:', error);
+    res.status(500).json({ error: 'Gagal menghapus layanan' });
+  }
+});
+
+// Riwayat chat dengan filter tanggal + pagination
+app.get('/api/riwayat', apiAuth, (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const offset = (page - 1) * limit;
+
+  const tanggalMulai = req.query.tanggal_mulai || '';
+  const tanggalSelesai = req.query.tanggal_selesai || '';
+
+  let whereClause = '';
+  let params = [];
+
+  if (tanggalMulai && tanggalSelesai) {
+    whereClause = 'WHERE DATE(lc.waktu) BETWEEN ? AND ?';
+    params = [tanggalMulai, tanggalSelesai];
+  } else if (tanggalMulai) {
+    whereClause = 'WHERE DATE(lc.waktu) >= ?';
+    params = [tanggalMulai];
+  } else if (tanggalSelesai) {
+    whereClause = 'WHERE DATE(lc.waktu) <= ?';
+    params = [tanggalSelesai];
+  }
+
+  const totalQuery = `SELECT COUNT(*) as total FROM log_chat lc ${whereClause}`;
+  const total = db.prepare(totalQuery).get(...params).total;
+  const totalPages = Math.ceil(total / limit);
+
+  const dataQuery = `
+    SELECT
+      lc.id,
+      lc.nomor_wa,
+      lc.pesan_masuk,
+      lc.balasan_bot,
+      lc.waktu,
+      l.nama as layanan_nama
+    FROM log_chat lc
+    LEFT JOIN layanan l ON lc.layanan_id = l.id
+    ${whereClause}
+    ORDER BY lc.waktu DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const riwayatList = db.prepare(dataQuery).all(...params, limit, offset).map((chat) => ({
+    ...chat,
+    nomor_wa: bersihkanNomor(chat.nomor_wa)
+  }));
+
+  res.json({
+    riwayatList,
+    pagination: { page, totalPages, total },
+    filter: { tanggalMulai, tanggalSelesai }
+  });
+});
+
+// Statistik penggunaan bot
+app.get('/api/statistik', apiAuth, (req, res) => {
+  const statsPerLayanan = db.prepare(`
+    SELECT
+      l.nama,
+      COUNT(lc.id) as jumlah_pertanyaan,
+      DATE(MIN(lc.waktu)) as pertama_ditanya,
+      DATE(MAX(lc.waktu)) as terakhir_ditanya
+    FROM layanan l
+    LEFT JOIN log_chat lc ON l.id = lc.layanan_id
+    GROUP BY l.id
+    ORDER BY jumlah_pertanyaan DESC
+  `).all();
+
+  const statsPerHari = db.prepare(`
+    SELECT
+      DATE(waktu) as tanggal,
+      COUNT(*) as jumlah
+    FROM log_chat
+    WHERE DATE(waktu) >= DATE('now', '-7 days')
+    GROUP BY DATE(waktu)
+    ORDER BY tanggal DESC
+  `).all();
+
+  const totalUnikWA = db.prepare(
+    'SELECT COUNT(DISTINCT nomor_wa) as total FROM log_chat'
+  ).get().total;
+
+  res.json({
+    statsPerLayanan,
+    statsPerHari,
+    totalUnikWA
+  });
+});
+
+// ===== ROUTES: LIVE CHAT ADMIN =====
+
+// Halaman Live Chat (EJS)
+app.get('/live-chat', requireAuth, (req, res) => {
+  const sesiList = db.prepare(`
+    SELECT id, nomor_wa, status, mulai_at, expired_at, selesai_at
+    FROM sesi_live_chat
+    ORDER BY mulai_at DESC
+    LIMIT 50
+  `).all().map(s => ({
+    ...s,
+    nomor_wa_bersih: bersihkanNomor(s.nomor_wa)
+  }));
+
+  const adminWa = db.prepare(
+    'SELECT nomor_wa FROM admin WHERE nomor_wa IS NOT NULL AND nomor_wa != "" LIMIT 1'
+  ).get();
+
+  res.render('live-chat', {
+    admin: req.session,
+    sesiList,
+    adminWa: adminWa ? adminWa.nomor_wa : ''
+  });
+});
+
+// API: Daftar sesi live chat
+app.get('/api/live-chat', apiAuth, (req, res) => {
+  const sesiList = db.prepare(`
+    SELECT id, nomor_wa, status, mulai_at, expired_at, selesai_at
+    FROM sesi_live_chat
+    ORDER BY mulai_at DESC
+    LIMIT 50
+  `).all().map(s => ({
+    ...s,
+    nomor_wa_bersih: bersihkanNomor(s.nomor_wa)
+  }));
+  res.json({ sesiList });
+});
+
+// API: Riwayat pesan dalam sesi
+app.get('/api/live-chat/:id/pesan', apiAuth, (req, res) => {
+  const sesi = db.prepare('SELECT * FROM sesi_live_chat WHERE id = ?').get(req.params.id);
+  if (!sesi) return res.status(404).json({ error: 'Sesi tidak ditemukan' });
+
+  const pesanList = db.prepare(
+    'SELECT id, arah, isi, waktu FROM pesan_live_chat WHERE sesi_id = ? ORDER BY waktu ASC'
+  ).all(req.params.id);
+
+  res.json({
+    sesi: { ...sesi, nomor_wa_bersih: bersihkanNomor(sesi.nomor_wa) },
+    pesanList
+  });
+});
+
+// API: Akhiri sesi (dari dashboard)
+app.post('/api/live-chat/:id/akhiri', apiAuth, (req, res) => {
+  const sesi = db.prepare('SELECT * FROM sesi_live_chat WHERE id = ?').get(req.params.id);
+  if (!sesi) return res.status(404).json({ error: 'Sesi tidak ditemukan' });
+
+  if (sesi.status !== 'aktif') {
+    return res.status(400).json({ error: 'Sesi sudah tidak aktif' });
+  }
+
+  db.prepare(`
+    UPDATE sesi_live_chat
+    SET status = 'selesai', selesai_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(req.params.id);
+
+  // Tandai sesi ini untuk di-pickup oleh bot (via DB flag)
+  // Bot akan mendeteksi & mengirim notif ke user & admin saat cekSesiExpired berjalan
+  // atau kita simpan flag di tabel khusus untuk pickup cepat
+
+  console.log(`🔴 Sesi #${req.params.id} (${sesi.nomor_wa}) diakhiri dari dashboard`);
+  res.json({ ok: true, nomor_wa: sesi.nomor_wa });
+});
+
+// API: Set / update nomor WA admin
+app.put('/api/admin/nomor-wa', apiAuth, (req, res) => {
+  const { nomor_wa } = req.body || {};
+  if (!nomor_wa && nomor_wa !== '') {
+    return res.status(400).json({ error: 'nomor_wa wajib diisi' });
+  }
+
+  db.prepare('UPDATE admin SET nomor_wa = ? WHERE id = ?')
+    .run(nomor_wa.trim(), req.session.adminId);
+
+  res.json({ ok: true });
+});
+
+// API: Ambil nomor WA admin saat ini
+app.get('/api/admin/nomor-wa', apiAuth, (req, res) => {
+  const admin = db.prepare('SELECT nomor_wa FROM admin WHERE id = ?').get(req.session.adminId);
+  res.json({ nomor_wa: admin ? (admin.nomor_wa || '') : '' });
+});
+
+// ===== BOT MANAGEMENT ROUTES =====
+
+// Halaman Bot Status
+app.get('/bot-status', requireAuth, async (req, res) => {
+  const botRow = db.prepare('SELECT * FROM bot_status WHERE id = 1').get();
+  res.render('bot-status', {
+    admin: req.session,
+    botStatus: botRow?.status || 'disconnected',
+    waNomor: botRow?.wa_nomor || null
+  });
+});
+
+// API: Status bot (polling)
+app.get('/api/bot/status', apiAuth, (req, res) => {
+  const botRow = db.prepare('SELECT * FROM bot_status WHERE id = 1').get();
+  res.json({
+    status: botRow?.status || 'disconnected',
+    wa_nomor: botRow?.wa_nomor || null,
+    updated_at: botRow?.updated_at || null
+  });
+});
+
+// API: QR Code sebagai data URL (base64 PNG)
+app.get('/api/bot/qr', apiAuth, async (req, res) => {
+  const botRow = db.prepare('SELECT qr_string, status FROM bot_status WHERE id = 1').get();
+  if (!botRow?.qr_string || botRow.status !== 'connecting') {
+    return res.json({ qr: null, status: botRow?.status || 'disconnected' });
+  }
+  try {
+    const qrDataUrl = await QRCode.toDataURL(botRow.qr_string, {
+      width: 300, margin: 2,
+      color: { dark: '#1e293b', light: '#ffffff' }
+    });
+    res.json({ qr: qrDataUrl, status: 'connecting' });
+  } catch (e) {
+    res.status(500).json({ error: 'Gagal generate QR' });
+  }
+});
+
+// API: Reset koneksi WhatsApp
+app.post('/api/bot/reset', apiAuth, async (req, res) => {
+  try {
+    console.log('🔄 Reset WhatsApp diminta dari dashboard...');
+    await resetBot();
+    res.json({ ok: true, message: 'Reset berhasil. QR code baru sedang digenerate.' });
+  } catch (e) {
+    console.error('❌ Reset gagal:', e.message);
+    res.status(500).json({ error: 'Reset gagal: ' + e.message });
+  }
+});
+
 // ===== ERROR HANDLING =====
+
 app.use((req, res) => {
   res.status(404).send('Halaman tidak ditemukan');
 });
 
 // ===== START SERVER =====
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`\n🌐 Dashboard Admin Chatbot Desa`);
   console.log(`📍 Buka browser: http://localhost:${PORT}`);
-  console.log(`👤 Login dengan username: admin, password: admin123\n`);
+  console.log(`👤 Login: admin / admin123`);
+  console.log(`📱 Status Bot: http://localhost:${PORT}/bot-status\n`);
+
+  // Mulai bot WhatsApp
+  try {
+    await startBot(db);
+  } catch (err) {
+    console.error('❌ Gagal memulai bot:', err.message);
+  }
 });
+
 
 // Graceful shutdown
 process.on('SIGINT', () => {
