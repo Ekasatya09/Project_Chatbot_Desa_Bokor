@@ -120,6 +120,21 @@ export const api = {
   },
 
   statistik: () => request<StatistikData>('/api/statistik'),
+
+  // ── Bot WhatsApp (QR connect) ──────────────────────────────────────────────
+  botStatus: () =>
+    request<{ status: string; wa_nomor: string | null; updated_at: string | null }>(
+      '/api/bot/status'
+    ),
+
+  botConnect: () =>
+    request<{ ok: boolean; error?: string; message?: string }>('/api/bot/connect', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  botQR: () =>
+    request<{ qr: string | null; status: string }>('/api/bot/qr'),
 };
 
 // Re-export types for convenience

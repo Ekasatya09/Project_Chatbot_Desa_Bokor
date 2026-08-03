@@ -159,8 +159,15 @@ app.post('/login', (req, res) => {
   // Update last login
   db.prepare('UPDATE admin SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(admin.id);
   
+  // Jika WA belum terhubung, arahkan ke bot-status untuk scan QR
+  const botRow = db.prepare('SELECT status FROM bot_status WHERE id = 1').get();
+  if (!botRow || botRow.status !== 'connected') {
+    return res.redirect('/bot-status?autoconnect=1');
+  }
+
   res.redirect('/');
 });
+
 
 // Logout
 app.get('/logout', (req, res) => {
@@ -914,7 +921,8 @@ app.get('/bot-status', requireAuth, async (req, res) => {
   res.render('bot-status', {
     admin: req.session,
     botStatus: botRow?.status || 'disconnected',
-    waNomor: botRow?.wa_nomor || null
+    waNomor: botRow?.wa_nomor || null,
+    autoconnect: req.query.autoconnect === '1'
   });
 });
 
@@ -954,6 +962,43 @@ app.post('/api/bot/reset', apiAuth, async (req, res) => {
   } catch (e) {
     console.error('❌ Reset gagal:', e.message);
     res.status(500).json({ error: 'Reset gagal: ' + e.message });
+  }
+});
+
+// API: Hubungkan WhatsApp (dari status disconnected, tanpa hapus sesi)
+app.post('/api/bot/connect', apiAuth, async (req, res) => {
+  try {
+    const botRow = db.prepare('SELECT status FROM bot_status WHERE id = 1').get();
+    if (botRow && (botRow.status === 'connected' || botRow.status === 'connecting')) {
+      return res.json({ ok: false, error: 'Bot sudah terhubung atau sedang menghubungkan.' });
+    }
+    console.log('📲 Menghubungkan WhatsApp dari dashboard...');
+    await startBot(db);
+    res.json({ ok: true, message: 'Proses koneksi dimulai. Menunggu QR code.' });
+  } catch (e) {
+    console.error('❌ Connect gagal:', e.message);
+    res.status(500).json({ error: 'Gagal memulai koneksi: ' + e.message });
+  }
+});
+
+// API: Putuskan / Hapus koneksi WhatsApp
+app.post('/api/bot/disconnect', apiAuth, async (req, res) => {
+  try {
+    console.log('🗑️ Putus koneksi WhatsApp diminta dari dashboard...');
+    await stopBot();
+    // Hapus auth_info agar WA benar-benar terputus
+    const AUTH_FOLDER = path.join(__dirname, '..', 'auth_info');
+    const { existsSync, rmSync } = await import('fs');
+    if (existsSync(AUTH_FOLDER)) {
+      rmSync(AUTH_FOLDER, { recursive: true, force: true });
+      console.log('🗑️ auth_info dihapus.');
+    }
+    // Update db
+    db.prepare(`UPDATE bot_status SET status='disconnected', qr_string=NULL, wa_nomor=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run();
+    res.json({ ok: true, message: 'WhatsApp berhasil diputuskan.' });
+  } catch (e) {
+    console.error('❌ Disconnect gagal:', e.message);
+    res.status(500).json({ error: 'Gagal memutuskan koneksi: ' + e.message });
   }
 });
 

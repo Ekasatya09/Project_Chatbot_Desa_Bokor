@@ -437,7 +437,11 @@ async function prosesAdminMessage(sock, nomorAdmin, isiPesan) {
 
     for (const { nomor_wa } of sesiList) {
       akhiriSesiLiveChat(nomor_wa);
-      sesiUser.delete(nomor_wa);
+      // Hanya hapus state user jika masih dalam live chat — jangan rusak
+      // navigasi menu yang sedang berjalan.
+      if (sesiUser.get(nomor_wa)?.state === 'live_chat') {
+        sesiUser.delete(nomor_wa);
+      }
       // Beritahu user
       await sock.sendMessage(nomor_wa, {
         text: '✅ Sesi chat dengan admin telah selesai. Terima kasih!\n\n💡 Ketik *menu* untuk kembali ke menu utama.'
@@ -485,7 +489,11 @@ async function cekSesiExpired(sock) {
 
     for (const { nomor_wa } of expiredList) {
       akhiriSesiLiveChat(nomor_wa);
-      sesiUser.delete(nomor_wa);
+      // Hanya hapus state user jika masih dalam live chat — jangan rusak
+      // navigasi menu yang sedang berjalan.
+      if (sesiUser.get(nomor_wa)?.state === 'live_chat') {
+        sesiUser.delete(nomor_wa);
+      }
       await sock.sendMessage(nomor_wa, {
         text: '⏰ Sesi chat dengan admin telah berakhir (batas waktu 24 jam).\n\n💡 Ketik *menu* untuk kembali ke menu utama.'
       });

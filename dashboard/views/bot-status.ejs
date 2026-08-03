@@ -66,7 +66,47 @@
       color: #166534;
     }
 
+    /* Tombol-tombol */
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .btn-connect {
+      background: #16a34a;
+      color: #fff;
+      border: none;
+      padding: 0.875rem 2rem;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .btn-connect:hover { background: #15803d; transform: translateY(-1px); }
+    .btn-connect:disabled { background: #86efac; cursor: not-allowed; transform: none; }
+
     .btn-reset {
+      background: #f59e0b;
+      color: #fff;
+      border: none;
+      padding: 0.75rem 2rem;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-reset:hover { background: #d97706; transform: translateY(-1px); }
+    .btn-reset:disabled { background: #fcd34d; cursor: not-allowed; transform: none; }
+
+    .btn-hapus-wa {
       background: #ef4444;
       color: #fff;
       border: none;
@@ -76,10 +116,9 @@
       font-weight: 600;
       cursor: pointer;
       transition: background 0.2s, transform 0.1s;
-      margin-top: 0.5rem;
     }
-    .btn-reset:hover { background: #dc2626; transform: translateY(-1px); }
-    .btn-reset:disabled { background: #fca5a5; cursor: not-allowed; transform: none; }
+    .btn-hapus-wa:hover { background: #dc2626; transform: translateY(-1px); }
+    .btn-hapus-wa:disabled { background: #fca5a5; cursor: not-allowed; transform: none; }
 
     .info-text { font-size: 0.85rem; color: #64748b; margin-top: 0.5rem; }
     .refresh-info { font-size: 0.75rem; color: #94a3b8; margin-top: 1rem; }
@@ -106,6 +145,17 @@
       pointer-events: none;
     }
     #toastNotif.show { opacity: 1; }
+
+    /* QR loading spinner */
+    .qr-spinner {
+      width: 48px; height: 48px;
+      border: 4px solid #e2e8f0;
+      border-top-color: #0ea5e9;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 0.5rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -134,12 +184,18 @@
     <h2>📱 Status Bot WhatsApp</h2>
     <p class="subtitle">Monitor koneksi dan kelola bot dari sini</p>
 
+    <% if (autoconnect && botStatus !== 'connected') { %>
+    <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:0.875rem 1.25rem;margin-bottom:1.5rem;font-size:0.9rem;color:#92400e;text-align:center;">
+      📲 <strong>Selamat datang!</strong> WhatsApp belum terhubung. Scan QR di bawah untuk mulai menggunakan chatbot.
+    </div>
+    <% } %>
+
     <div class="bot-card">
       <!-- Status Badge -->
       <div>
-        <span class="status-badge <% if (botStatus === 'connected') { %>connected<% } else if (botStatus === 'connecting') { %>connecting<% } else { %>disconnected<% } %>"
+        <span class="status-badge <%= botStatus === 'connected' ? 'connected' : botStatus === 'connecting' ? 'connecting' : 'disconnected' %>"
               id="statusBadge">
-          <span class="status-dot <% if (botStatus === 'connected') { %>connected<% } else if (botStatus === 'connecting') { %>connecting<% } else { %>disconnected<% } %>"
+          <span class="status-dot <%= botStatus === 'connected' ? 'connected' : botStatus === 'connecting' ? 'connecting' : 'disconnected' %>"
                 id="statusDot"></span>
           <span id="statusText">
             <% if (botStatus === 'connected') { %>🟢 Terhubung<% } else if (botStatus === 'connecting') { %>🟡 Menghubungkan...<% } else { %>🔴 Terputus<% } %>
@@ -159,6 +215,7 @@
       <!-- QR Code area -->
       <div class="qr-wrapper" id="qrWrapper">
         <% if (botStatus === 'connecting') { %>
+          <div class="qr-spinner" id="qrSpinner"></div>
           <div id="qrLoading" style="color:#64748b;font-size:0.9rem;">⏳ Memuat QR Code...</div>
           <img id="qrImage" src="" alt="QR Code" style="display:none;">
           <div id="qrHint" style="font-size:0.8rem;color:#64748b;display:none;">
@@ -168,14 +225,13 @@
           <div style="font-size:3rem;">✅</div>
           <div style="font-weight:600;color:#065f46;">Bot aktif dan siap menerima pesan!</div>
         <% } else { %>
-          <div style="font-size:3rem;">🔴</div>
-          <div style="color:#64748b;">Bot tidak terhubung. Klik Reset untuk memulai ulang.</div>
+          <div class="qr-spinner"></div>
+          <div style="color:#64748b;font-size:0.9rem;">⏳ Memulai koneksi WhatsApp...</div>
         <% } %>
       </div>
 
-      <!-- Panduan scan -->
-      <% if (botStatus === 'connecting') { %>
-      <div class="steps-box" id="scanSteps">
+      <!-- Panduan scan (muncul saat connecting) -->
+      <div class="steps-box" id="scanSteps" style="display:<%= botStatus === 'connecting' ? 'block' : 'none' %>">
         <strong>📋 Cara scan QR:</strong>
         <ol>
           <li>Buka WhatsApp di HP</li>
@@ -184,24 +240,49 @@
           <li>Arahkan kamera ke QR di atas</li>
         </ol>
       </div>
-      <% } %>
 
-      <!-- Info koneksi -->
+      <!-- Info -->
       <p class="info-text" id="infoText">
         <% if (botStatus === 'connected') { %>
-          Bot berjalan normal. Untuk mengganti akun WhatsApp, klik Reset.
+          Bot berjalan normal. Gunakan tombol di bawah untuk mengelola koneksi.
         <% } else if (botStatus === 'connecting') { %>
-          Menunggu scan QR. QR auto-refresh setiap 5 detik.
+          Menunggu scan QR. QR auto-refresh setiap beberapa detik.
         <% } else { %>
-          Bot terputus. Klik Reset untuk memulai koneksi baru.
+          Klik <strong>Hubungkan WhatsApp</strong> untuk memulai koneksi dan menampilkan QR.
         <% } %>
       </p>
 
-      <!-- Tombol Reset -->
-      <button class="btn-reset" id="btnReset" onclick="resetWhatsApp()">
-        🔄 Reset Koneksi WhatsApp
-      </button>
-      <p class="info-text">Reset akan menghapus sesi lama dan meminta QR baru untuk scan ulang.</p>
+      <!-- Tombol-tombol -->
+      <div class="btn-group" id="btnGroup">
+        <!-- Tombol Hubungkan (muncul saat disconnected) -->
+        <button class="btn-connect" id="btnConnect"
+                style="display:<%= botStatus === 'disconnected' ? 'flex' : 'none' %>"
+                onclick="hubungkanWhatsApp()">
+          📲 Hubungkan WhatsApp
+        </button>
+
+        <!-- Tombol Reset (muncul saat connecting atau connected) -->
+        <button class="btn-reset" id="btnReset"
+                style="display:<%= botStatus !== 'disconnected' ? 'inline-block' : 'none' %>"
+                onclick="resetWhatsApp()">
+          🔄 Ganti / Reset Koneksi
+        </button>
+
+        <!-- Tombol Hapus WA (muncul hanya saat connected) -->
+        <button class="btn-hapus-wa" id="btnHapusWA"
+                style="display:<%= botStatus === 'connected' ? 'inline-block' : 'none' %>"
+                onclick="hapusWhatsApp()">
+          🗑️ Hapus / Putuskan WhatsApp
+        </button>
+      </div>
+
+      <p class="info-text" id="infoBtn" style="font-size:0.8rem;color:#94a3b8;margin-top:0.5rem;">
+        <% if (botStatus === 'connected') { %>
+          Reset: ganti akun WA &nbsp;|&nbsp; Hapus: putuskan koneksi tanpa scan ulang
+        <% } else if (botStatus === 'connecting') { %>
+          Reset akan memulai ulang proses koneksi WhatsApp
+        <% } %>
+      </p>
 
       <p class="refresh-info" id="refreshInfo">Auto-refresh status setiap 3 detik</p>
     </div>
@@ -213,7 +294,7 @@
 <script>
   let pollInterval = null;
 
-  function toast(msg, duration = 3000) {
+  function toast(msg, duration = 3500) {
     const el = document.getElementById('toastNotif');
     el.textContent = msg;
     el.classList.add('show');
@@ -235,17 +316,21 @@
   }
 
   function setStatusUI(status, waNomor) {
-    const badge = document.getElementById('statusBadge');
-    const dot = document.getElementById('statusDot');
-    const text = document.getElementById('statusText');
-    const qrWrapper = document.getElementById('qrWrapper');
+    const badge   = document.getElementById('statusBadge');
+    const dot     = document.getElementById('statusDot');
+    const text    = document.getElementById('statusText');
+    const qrWrapper  = document.getElementById('qrWrapper');
     const waNomorBox = document.getElementById('waNomorBox');
-    const infoText = document.getElementById('infoText');
-    const scanSteps = document.getElementById('scanSteps');
+    const infoText   = document.getElementById('infoText');
+    const infoBtn    = document.getElementById('infoBtn');
+    const scanSteps  = document.getElementById('scanSteps');
+    const btnConnect = document.getElementById('btnConnect');
+    const btnReset   = document.getElementById('btnReset');
+    const btnHapus   = document.getElementById('btnHapusWA');
 
-    // Reset kelas
+    // Reset kelas badge/dot
     badge.className = 'status-badge ' + status;
-    dot.className = 'status-dot ' + status;
+    dot.className   = 'status-dot ' + status;
 
     if (status === 'connected') {
       text.textContent = '🟢 Terhubung';
@@ -254,21 +339,35 @@
         waNomorBox.style.display = 'block';
         waNomorBox.innerHTML = `📞 Terhubung sebagai: <strong>+${waNomor}</strong>`;
       }
-      infoText.textContent = 'Bot berjalan normal. Untuk mengganti akun WhatsApp, klik Reset.';
-      if (scanSteps) scanSteps.style.display = 'none';
+      infoText.textContent = 'Bot berjalan normal. Gunakan tombol di bawah untuk mengelola koneksi.';
+      infoBtn.textContent  = 'Reset: ganti akun WA | Hapus: putuskan koneksi tanpa scan ulang';
+      scanSteps.style.display  = 'none';
+      btnConnect.style.display = 'none';
+      btnReset.style.display   = 'inline-block';
+      btnHapus.style.display   = 'inline-block';
+
     } else if (status === 'connecting') {
       text.textContent = '🟡 Menghubungkan...';
       waNomorBox.style.display = 'none';
-      infoText.textContent = 'Menunggu scan QR. QR auto-refresh setiap 5 detik.';
-      if (scanSteps) scanSteps.style.display = 'block';
+      infoText.textContent = 'Menunggu scan QR. QR auto-refresh setiap beberapa detik.';
+      infoBtn.textContent  = 'Reset akan memulai ulang proses koneksi WhatsApp';
+      scanSteps.style.display  = 'block';
+      btnConnect.style.display = 'none';
+      btnReset.style.display   = 'inline-block';
+      btnHapus.style.display   = 'none';
       // Load QR
       loadQR();
+
     } else {
       text.textContent = '🔴 Terputus';
       waNomorBox.style.display = 'none';
-      qrWrapper.innerHTML = '<div style="font-size:3rem;">🔴</div><div style="color:#64748b;">Bot tidak terhubung. Klik Reset untuk memulai ulang.</div>';
-      infoText.textContent = 'Bot terputus. Klik Reset untuk memulai koneksi baru.';
-      if (scanSteps) scanSteps.style.display = 'none';
+      qrWrapper.innerHTML = '<div style="font-size:3rem;">📵</div><div style="color:#64748b;">WhatsApp belum terhubung.<br>Klik <strong>Hubungkan WhatsApp</strong> untuk mulai.</div>';
+      infoText.innerHTML  = 'Klik <strong>Hubungkan WhatsApp</strong> untuk memulai koneksi dan menampilkan QR.';
+      infoBtn.textContent = '';
+      scanSteps.style.display  = 'none';
+      btnConnect.style.display = 'flex';
+      btnReset.style.display   = 'none';
+      btnHapus.style.display   = 'none';
     }
   }
 
@@ -285,7 +384,10 @@
         </div>
       `;
     } else if (data.status === 'connecting') {
-      qrWrapper.innerHTML = '<div style="color:#64748b;padding:1rem;">⏳ Menunggu QR code dari server...</div>';
+      qrWrapper.innerHTML = `
+        <div class="qr-spinner"></div>
+        <div style="color:#64748b;padding:0.5rem;font-size:0.9rem;">⏳ Menunggu QR dari server...</div>
+      `;
     }
   }
 
@@ -307,10 +409,10 @@
       }
     }
 
-    // Refresh QR setiap 5 detik saat connecting
+    // Refresh QR setiap 6 detik saat connecting
     if (data.status === 'connecting') {
       qrRefreshCount++;
-      if (qrRefreshCount % 2 === 0) loadQR(); // setiap 6 detik (2 * 3s)
+      if (qrRefreshCount % 2 === 0) loadQR();
     } else {
       qrRefreshCount = 0;
     }
@@ -318,13 +420,65 @@
 
   // Mulai polling
   if ('<%= botStatus %>' === 'connecting') {
-    setTimeout(loadQR, 800); // load QR segera
+    setTimeout(loadQR, 800);
   }
   setInterval(pollStatus, 3000);
 
+  // ── Auto-connect saat halaman dibuka pertama kali ───────────────
+  // Jika status disconnected (termasuk redirect dari login), langsung mulai koneksi
+  const _autoconnect = <%- JSON.stringify(autoconnect) %>;
+  if ('<%= botStatus %>' === 'disconnected') {
+    // Tampilkan spinner dulu
+    setStatusUI('connecting', null);
+    // Langsung hubungkan tanpa klik tombol
+    setTimeout(async () => {
+      try {
+        const res = await fetch('/api/bot/connect', { method: 'POST', credentials: 'include' });
+        const data = await res.json();
+        if (data.ok) {
+          if (_autoconnect) toast('📲 WhatsApp belum terhubung. Scan QR untuk melanjutkan...');
+          setTimeout(loadQR, 2000);
+        } else {
+          // Jika gagal (misal sudah connecting), coba load QR saja
+          setTimeout(loadQR, 1000);
+        }
+      } catch (e) {
+        console.warn('Auto-connect gagal:', e);
+      }
+    }, 500);
+  }
+
+  // ── Hubungkan WhatsApp (dari disconnected) ──────────────────────
+  async function hubungkanWhatsApp() {
+    const btn = document.getElementById('btnConnect');
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Menghubungkan...';
+
+    try {
+      const res = await fetch('/api/bot/connect', {
+        method: 'POST',
+        credentials: 'include'
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast('📲 Memulai koneksi WhatsApp... Menunggu QR code...');
+        setStatusUI('connecting', null);
+        setTimeout(loadQR, 2000);
+      } else {
+        toast('❌ Gagal memulai koneksi: ' + (data.error || 'Error tidak diketahui'));
+        btn.disabled = false;
+        btn.innerHTML = '📲 Hubungkan WhatsApp';
+      }
+    } catch (e) {
+      toast('❌ Gagal terhubung ke server');
+      btn.disabled = false;
+      btn.innerHTML = '📲 Hubungkan WhatsApp';
+    }
+  }
+
   // ── Reset WhatsApp ─────────────────────────────────────────────
   async function resetWhatsApp() {
-    if (!confirm('Reset koneksi WhatsApp?\n\nIni akan:\n• Menghapus sesi login lama\n• Memerlukan scan QR baru\n• Bot akan offline sementara (~5 detik)')) return;
+    if (!confirm('Ganti / Reset koneksi WhatsApp?\n\nIni akan:\n• Menghapus sesi login lama\n• Memerlukan scan QR baru\n• Bot akan offline sementara (~5 detik)')) return;
 
     const btn = document.getElementById('btnReset');
     btn.disabled = true;
@@ -348,7 +502,35 @@
     }
 
     btn.disabled = false;
-    btn.textContent = '🔄 Reset Koneksi WhatsApp';
+    btn.textContent = '🔄 Ganti / Reset Koneksi';
+  }
+
+  // ── Hapus / Putuskan WhatsApp ───────────────────────────────────
+  async function hapusWhatsApp() {
+    if (!confirm('Hapus / Putuskan WhatsApp?\n\nIni akan:\n• Logout dari WhatsApp\n• Menghapus sesi login\n• Bot tidak aktif sampai dihubungkan lagi')) return;
+
+    const btn = document.getElementById('btnHapusWA');
+    btn.disabled = true;
+    btn.textContent = '⏳ Memutuskan...';
+
+    try {
+      const res = await fetch('/api/bot/disconnect', {
+        method: 'POST',
+        credentials: 'include'
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast('🗑️ WhatsApp berhasil diputuskan. Bot tidak aktif.');
+        setStatusUI('disconnected', null);
+      } else {
+        toast('❌ Gagal memutuskan: ' + (data.error || 'Error tidak diketahui'));
+      }
+    } catch (e) {
+      toast('❌ Gagal terhubung ke server');
+    }
+
+    btn.disabled = false;
+    btn.textContent = '🗑️ Hapus / Putuskan WhatsApp';
   }
 </script>
 
