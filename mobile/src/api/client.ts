@@ -135,6 +135,12 @@ export const api = {
 
   botQR: () =>
     request<{ qr: string | null; status: string }>('/api/bot/qr'),
+
+  // ── Live chat ───────────────────────────────────────────────────────────────
+  liveChatList: () =>
+    request<{ sesiList: Array<{ id: number; nomor_wa: string; nomor_wa_bersih: string; status: string }> }>(
+      '/api/live-chat'
+    ),
 };
 
 // Re-export types for convenience
