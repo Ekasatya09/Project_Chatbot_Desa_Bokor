@@ -40,6 +40,12 @@ let _waNomor = null;
 let _onStatusChange = null;     // callback(status, qrString, waNomor)
 let _expireInterval = null;
 let _manualStop = false;        // true jika dihentikan manual (jangan reconnect)
+let _reconnectTimer = null;     // timer reconnect otomatis (dibatalkan saat reset)
+
+// Map LID → nomor telepon asli (format: '628221424210')
+// Baileys v6+ kadang menyimpan JID dalam format @lid (Linked ID) bukan nomor asli.
+// Map ini diisi dari event contacts.upsert / contacts.update.
+const _lidToNomor = new Map();
 
 const sesiUser = new Map();
 
@@ -47,6 +53,7 @@ const sesiUser = new Map();
 export function getBotStatus() { return _status; }
 export function getQrString()  { return _qrString; }
 export function getWaNomor()   { return _waNomor; }
+export { bersihkanNomor };  // Ekspor agar server.js bisa pakai LID map yang sama
 
 function setStatus(status, qr = null, nomor = null) {
   _status = status;
@@ -127,7 +134,7 @@ function simpanLogChat(nomorWa, pesanMasuk, balasanBot, layananId = null) {
 
 function getAdminNomor() {
   try {
-    const admin = db.prepare('SELECT nomor_wa FROM admin WHERE nomor_wa IS NOT NULL AND nomor_wa != "" LIMIT 1').get();
+    const admin = db.prepare('SELECT nomor_wa FROM admin WHERE nomor_wa IS NOT NULL AND nomor_wa != \'\' LIMIT 1').get();
     if (!admin) return null;
     let nomor = admin.nomor_wa.replace(/\D/g, '');
     if (!nomor.startsWith('62')) nomor = '62' + nomor.replace(/^0/, '');
@@ -157,6 +164,20 @@ function akhiriSesiLiveChat(nomorWa) {
   `).run(nomorWa);
 }
 
+/**
+ * Unpin chat di WhatsApp bot (dipanggil saat sesi live chat selesai).
+ * @param {string} nomorWa - JID lengkap (misal 628xxx@s.whatsapp.net)
+ */
+async function unpinChat(nomorWa) {
+  if (!sock) return;
+  try {
+    await sock.chatModify({ pin: false }, nomorWa);
+    console.log(`📌 Chat ${nomorWa} di-unpin (sesi selesai)`);
+  } catch (e) {
+    console.warn('⚠️ Gagal unpin chat:', e.message);
+  }
+}
+
 function simpanPesanLive(sesiId, arah, isi) {
   try {
     db.prepare('INSERT INTO pesan_live_chat (sesi_id, arah, isi) VALUES (?, ?, ?)').run(sesiId, arah, isi);
@@ -183,12 +204,51 @@ function getUserLiveChatTerakhir() {
 
 // ===== UTILITY =====
 
+/**
+ * Isi map LID → nomor dari daftar kontak Baileys
+ * @param {Array} contacts - Array objek kontak dari Baileys
+ */
+function populateLidMap(contacts) {
+  if (!Array.isArray(contacts)) return;
+  for (const c of contacts) {
+    // c.id bisa berupa '628221424210@s.whatsapp.net' atau '12567258918937@lid'
+    // c.lid biasanya berisi LID jika ada
+    if (c.id && c.lid) {
+      // c.id = nomor asli (@s.whatsapp.net), c.lid = LID (@lid)
+      const nomor = c.id.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '');
+      const lid   = c.lid.replace(/@lid$/, '').replace(/@s\.whatsapp\.net$/, '');
+      if (nomor && lid && /^\d+$/.test(lid)) {
+        _lidToNomor.set(lid, nomor);
+      }
+    }
+    // Kadang sebaliknya: c.id = LID, c.notify berisi nama, tapi tidak ada nomor
+    // Dalam kasus ini kita skip karena tidak ada info nomor asli
+  }
+}
+
+/**
+ * Bersihkan nomor WA dari suffix Baileys dan resolve LID ke nomor asli.
+ * Baileys v6+ kadang menyimpan nomor dalam format @lid (Linked ID).
+ * @param {string} nomor - JID atau nomor mentah
+ * @returns {string} Nomor telepon bersih (misal: '628221424210')
+ */
 function bersihkanNomor(nomor) {
   if (!nomor) return '';
-  return nomor
+
+  const isLid = nomor.endsWith('@lid');
+  const stripped = nomor
     .replace(/@s\.whatsapp\.net$/, '')
     .replace(/@lid$/, '')
     .replace(/@c\.us$/, '');
+
+  // Jika formatnya LID (semua digit tapi bukan nomor E.164 yang dikenal),
+  // coba resolve ke nomor asli dari map
+  if (isLid || (stripped && /^\d+$/.test(stripped) && !stripped.startsWith('62') && stripped.length > 10)) {
+    const resolved = _lidToNomor.get(stripped);
+    if (resolved) return resolved;
+  }
+
+  return stripped;
 }
 
 function normalisasiTeks(teks) {
@@ -294,14 +354,13 @@ async function prosesAdminMessage(currentSock, nomorAdmin, isiPesan) {
     }
     for (const { nomor_wa } of sesiList) {
       akhiriSesiLiveChat(nomor_wa);
+      // Unpin chat karena sesi sudah selesai
+      await unpinChat(nomor_wa);
       // Hanya hapus state user jika masih dalam live chat — jangan rusak
       // navigasi menu yang sedang berjalan.
       if (sesiUser.get(nomor_wa)?.state === 'live_chat') {
         sesiUser.delete(nomor_wa);
       }
-      await currentSock.sendMessage(nomor_wa, {
-        text: '✅ Sesi chat dengan admin telah selesai. Terima kasih!\n\n💡 Ketik *menu* untuk kembali ke menu utama.'
-      });
       console.log(`🔴 Sesi live chat ${nomor_wa} diakhiri oleh admin`);
     }
     await currentSock.sendMessage(nomorAdmin, { text: `✅ ${sesiList.length} sesi live chat telah diakhiri.` });
@@ -333,14 +392,13 @@ async function cekSesiExpired(currentSock) {
     `).all();
     for (const { nomor_wa } of expiredList) {
       akhiriSesiLiveChat(nomor_wa);
+      // Unpin chat karena sesi expired
+      await unpinChat(nomor_wa);
       // Hanya hapus state user jika masih dalam live chat — jangan rusak
       // navigasi menu yang sedang berjalan.
       if (sesiUser.get(nomor_wa)?.state === 'live_chat') {
         sesiUser.delete(nomor_wa);
       }
-      await currentSock.sendMessage(nomor_wa, {
-        text: '⏰ Sesi chat dengan admin telah berakhir (batas waktu 24 jam).\n\n💡 Ketik *menu* untuk kembali ke menu utama.'
-      });
       console.log(`⏰ Sesi live chat ${nomor_wa} expired otomatis`);
     }
     if (expiredList.length > 0) {
@@ -441,15 +499,27 @@ async function prosesPesan(currentSock, pesan) {
         const sesiId = buatSesiLiveChat(nomorPengirim);
         sesiUser.set(nomorPengirim, { state: 'live_chat' });
         await kirimBalasan(
-          '✅ Permintaan Anda telah diterima.\n\n' +
-          '👤 Admin akan segera merespons. Silakan ketik pesan Anda sekarang.\n\n' +
-          '💡 Sesi ini aktif selama *24 jam*. Ketik *menu* jika ingin membatalkan.'
+          '✨ *✅ PERMINTAAN ANDA TELAH DITERIMA!* ✨\n\n' +
+          '🎉 Permintaan Anda sudah masuk ke admin desa.\n' +
+          '👤 Admin akan segera merespons percakapan Anda.\n\n' +
+          '📝 Silakan ketik pesan Anda sekarang.\n\n' +
+          '⏳ Sesi ini aktif selama *24 jam*.\n' +
+          '💡 Ketik *menu* jika ingin membatalkan.'
         );
+
+        // 📌 Pin percakapan di daftar chat bot agar mudah diidentifikasi admin
+        try {
+          await currentSock.chatModify({ pin: true }, nomorPengirim);
+          console.log(`📌 Chat ${nomorPengirim} di-pin (live chat request)`);
+        } catch (e) {
+          console.warn('⚠️ Gagal pin chat:', e.message);
+        }
+
         const adminWA = getAdminNomor();
         if (adminWA) {
           const nomorBersih = bersihkanNomor(nomorPengirim);
           await currentSock.sendMessage(adminWA, {
-            text: `🔔 *Permintaan Live Chat Masuk*\n\n👤 Nomor: +${nomorBersih}\n🕐 Waktu: ${new Date().toLocaleString('id-ID')}\n\nBalas pesan ini untuk merespons pengguna.\nKetik *!selesai* untuk mengakhiri sesi.`
+            text: `📌 *Permintaan Live Chat Masuk*\n\n👤 Nomor: +${nomorBersih}\n🕐 Waktu: ${new Date().toLocaleString('id-ID')}\n\nBalas pesan ini untuk merespons pengguna.\nKetik *!selesai* untuk mengakhiri sesi.\n\n_Chat dengan pengguna ini telah di-pin di daftar WhatsApp bot._`
           });
           console.log(`🔔 Notifikasi live chat dikirim ke admin`);
         } else {
@@ -477,7 +547,6 @@ async function prosesPesan(currentSock, pesan) {
         return;
       } else {
         sesiUser.delete(nomorPengirim);
-        await kirimBalasan('⏰ Sesi live chat Anda telah berakhir.\n\n💡 Ketik *menu* untuk kembali ke menu utama.');
         await currentSock.sendPresenceUpdate('paused', nomorPengirim);
         return;
       }
@@ -637,12 +706,29 @@ async function jalankanBot() {
       console.log('❌ Koneksi terputus. Reason:', lastDisconnect?.error?.message);
       setStatus('disconnected');
 
-      if (_manualStop || isLoggedOut) {
-        console.log('🛑 Bot dihentikan manual atau logged out.');
+      // Hentikan interval expired saat disconnect
+      if (_expireInterval) { clearInterval(_expireInterval); _expireInterval = null; }
+
+      if (_manualStop) {
+        console.log('🛑 Bot dihentikan manual.');
         return;
       }
+
+      if (isLoggedOut) {
+        console.log('🚪 Logged out dari WhatsApp. Hapus auth_info dan scan QR ulang.');
+        // Hapus auth_info agar QR baru bisa digenerate
+        if (fs.existsSync(FOLDER_AUTH)) {
+          fs.rmSync(FOLDER_AUTH, { recursive: true, force: true });
+          console.log('🗑️ auth_info dihapus (logged out).');
+        }
+        return;
+      }
+
       console.log('🔄 Mencoba reconnect dalam 5 detik...');
-      setTimeout(() => jalankanBot(), 5000);
+      _reconnectTimer = setTimeout(() => {
+        _reconnectTimer = null;
+        if (!_manualStop) jalankanBot();
+      }, 5000);
     } else if (connection === 'open') {
       const nomor = sock.user?.id ? bersihkanNomor(sock.user.id) : null;
       _waNomor = nomor;
@@ -657,6 +743,20 @@ async function jalankanBot() {
   });
 
   sock.ev.on('creds.update', saveCreds);
+
+  // ── Populate LID map dari kontak ─────────────────────────────
+  sock.ev.on('contacts.upsert', (contacts) => {
+    populateLidMap(contacts);
+    if (contacts.length > 0) {
+      console.log(`📇 ${contacts.length} kontak diperbarui, LID map: ${_lidToNomor.size} entri`);
+    }
+  });
+
+  sock.ev.on('contacts.update', (updates) => {
+    // updates adalah array Partial<Contact>
+    populateLidMap(updates);
+  });
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const pesan of messages) {
@@ -676,20 +776,32 @@ async function jalankanBot() {
 export async function startBot(dbInstance, onStatusChange = null) {
   db = dbInstance;
   _onStatusChange = onStatusChange;
+  // Jika masih ada socket lama yang hidup, tutup dulu — mencegah dua koneksi
+  // Baileys memakai auth_info yang sama (menyebabkan pesan tidak diproses).
+  if (sock || _reconnectTimer) {
+    await stopBot();
+  }
   _manualStop = false;
+  // Reset status DB ke disconnected dulu — penting saat server restart
+  // agar UI tidak salah tampilkan status 'connected' dari sesi lama yang sudah mati
+  updateBotStatusDb('disconnected', null, null);
+  _status = 'disconnected';
   console.log('🚀 Memulai Chatbot Administrasi Desa...');
   await jalankanBot();
 }
 
 /**
- * Hentikan bot
+ * Hentikan bot (tanpa logout — auth_info tetap valid untuk koneksi ulang)
  */
 export async function stopBot() {
   _manualStop = true;
+  // Batalkan timer reconnect otomatis yang mungkin tertunda
+  if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   if (_expireInterval) { clearInterval(_expireInterval); _expireInterval = null; }
   if (sock) {
-    try { await sock.logout(); } catch { /* abaikan */ }
-    try { sock.end(); } catch { /* abaikan */ }
+    // Jangan panggil sock.logout() — itu akan menghapus sesi WA secara permanen
+    // Cukup tutup koneksi socket lokal saja
+    try { sock.end(new Error('Manual stop')); } catch { /* abaikan */ }
     sock = null;
   }
   setStatus('disconnected');

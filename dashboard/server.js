@@ -4,10 +4,11 @@ import bodyParser from 'body-parser';
 import Database from 'better-sqlite3';
 import bcrypt from 'bcrypt';
 import cors from 'cors';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import QRCode from 'qrcode';
-import { startBot, stopBot, resetBot, getBotStatus, getQrString, getWaNomor } from '../bot-core.js';
+import { startBot, stopBot, resetBot, getBotStatus, getQrString, getWaNomor, bersihkanNomor } from '../bot-core.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,45 +41,12 @@ app.use(cors({
   credentials: true
 }));
 
-// ===== ROUTES: STATIC REACT NATIVE WEB (production) =====
-// Jika build web dari mobile/ sudah diexport ke mobile/dist, sajikan di sini.
-// Blok ini diletakkan SEBELUM route EJS agar RN Web build menang di production.
-// Jika build tidak ada, dashboard EJS lama tetap berfungsi sebagai fallback.
+// ===== ROUTES: STATIC REACT NATIVE WEB (fallback) =====
+// Build web dari mobile/ disajikan HANYA untuk route yang tidak ditangani
+// dashboard EJS (mis. deep link SPA mobile). Dashboard admin EJS tetap menjadi
+// halaman utama agar fitur (termasuk reset WhatsApp) selalu tampil.
 const MOBILE_WEB_DIST = path.join(__dirname, '..', 'mobile', 'dist');
-
-try {
-  const fs = await import('fs');
-  if (fs.existsSync(MOBILE_WEB_DIST)) {
-    app.use(express.static(MOBILE_WEB_DIST));
-
-    // Peta route → file HTML statis hasil expo export
-    const staticHtml = {
-      '/': 'index.html',
-      '/login': 'login.html',
-      '/layanan': 'layanan.html',
-      '/layanan/tambah': 'layanan.html',
-      '/riwayat': 'riwayat.html',
-      '/statistik': 'statistik.html'
-    };
-
-    // Fallback SPA: route yang tidak dikenal diarahkan ke file HTML yang sesuai
-    app.get('*', (req, res, next) => {
-      if (req.path.startsWith('/api')) return next();
-
-      // Dynamic route /layanan/:id → layanan/[id].html
-      const layananMatch = req.path.match(/^\/layanan\/(\d+)$/);
-      if (layananMatch) {
-        return res.sendFile(path.join(MOBILE_WEB_DIST, 'layanan', '[id].html'));
-      }
-
-      const htmlFile = staticHtml[req.path] || 'index.html';
-      res.sendFile(path.join(MOBILE_WEB_DIST, htmlFile));
-    });
-    console.log('📱 React Native Web build ditemukan, disajikan dari mobile/dist');
-  }
-} catch (error) {
-  console.warn('⚠️ Gagal memuat mobile/dist:', error.message);
-}
+let MOBILE_WEB_AVAILABLE = false;
 
 // ===== INISIALISASI DATABASE =====
 let db;
@@ -92,20 +60,13 @@ try {
   process.exit(1);
 }
 
-// ===== UTILITY =====
-/**
- * Bersihkan nomor WA dari suffix Baileys (@s.whatsapp.net, @lid, dll)
- * Baileys v6+ kadang menyimpan nomor dengan format @lid (Linked ID)
- * @param {string} nomor
- * @returns {string}
- */
-function bersihkanNomor(nomor) {
-  if (!nomor) return '';
-  return nomor
-    .replace(/@s\.whatsapp\.net$/, '')
-    .replace(/@lid$/, '')
-    .replace(/@c\.us$/, '');
+// Cek ketersediaan build React Native Web (untuk SPA fallback di akhir)
+MOBILE_WEB_AVAILABLE = fs.existsSync(MOBILE_WEB_DIST);
+if (MOBILE_WEB_AVAILABLE) {
+  console.log('📱 Build React Native Web ditemukan (mobile/dist) — dipakai untuk route yang tidak ada di dashboard EJS');
 }
+
+// bersihkanNomor diimport dari bot-core.js (sudah bisa resolve LID ke nomor asli)
 
 // ===== MIDDLEWARE AUTHENTICATION =====
 function requireAuth(req, res, next) {
@@ -832,7 +793,7 @@ app.get('/live-chat', requireAuth, (req, res) => {
   }));
 
   const adminWa = db.prepare(
-    'SELECT nomor_wa FROM admin WHERE nomor_wa IS NOT NULL AND nomor_wa != "" LIMIT 1'
+    'SELECT nomor_wa FROM admin WHERE nomor_wa IS NOT NULL AND nomor_wa != \'\' LIMIT 1'
   ).get();
 
   res.render('live-chat', {
@@ -986,21 +947,50 @@ app.post('/api/bot/disconnect', apiAuth, async (req, res) => {
   try {
     console.log('🗑️ Putus koneksi WhatsApp diminta dari dashboard...');
     await stopBot();
-    // Hapus auth_info agar WA benar-benar terputus
-    const AUTH_FOLDER = path.join(__dirname, '..', 'auth_info');
-    const { existsSync, rmSync } = await import('fs');
-    if (existsSync(AUTH_FOLDER)) {
-      rmSync(AUTH_FOLDER, { recursive: true, force: true });
-      console.log('🗑️ auth_info dihapus.');
-    }
-    // Update db
+    // CATATAN: auth_info TIDAK dihapus agar bisa reconnect tanpa scan QR ulang
+    // Untuk ganti akun / reset total, gunakan endpoint /api/bot/reset
     db.prepare(`UPDATE bot_status SET status='disconnected', qr_string=NULL, wa_nomor=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run();
-    res.json({ ok: true, message: 'WhatsApp berhasil diputuskan.' });
+    res.json({ ok: true, message: 'WhatsApp berhasil diputuskan. Klik Hubungkan untuk menyambung kembali.' });
   } catch (e) {
     console.error('❌ Disconnect gagal:', e.message);
     res.status(500).json({ error: 'Gagal memutuskan koneksi: ' + e.message });
   }
 });
+
+// ===== SPA FALLBACK (React Native Web) =====
+// Hanya melayani route yang TIDAK ditangani dashboard EJS / API di atas.
+// Static asset (js/css/gambar) dari build mobile juga dilayani di sini.
+if (MOBILE_WEB_AVAILABLE) {
+  // Static asset build mobile (hanya jika tidak bertabrakan dengan /public EJS)
+  const assetDir = path.join(MOBILE_WEB_DIST, '_expo');
+  if (fs.existsSync(assetDir)) {
+    app.use('/_expo', express.static(assetDir));
+  }
+  app.use('/assets', express.static(path.join(MOBILE_WEB_DIST, 'assets')));
+
+  // Route milik build mobile yang tidak ada di dashboard EJS
+  const staticHtml = {
+    '/qr-connect': 'qr-connect.html'
+  };
+
+  app.get('*', (req, res, next) => {
+    // /api dan route dashboard (yang tak dikenal) → 404 biasa
+    if (req.path.startsWith('/api')) return next();
+
+    // Dynamic route /layanan/:id → layanan/[id].html
+    const layananMatch = req.path.match(/^\/layanan\/(\d+)$/);
+    if (layananMatch) {
+      return res.sendFile(path.join(MOBILE_WEB_DIST, 'layanan', '[id].html'));
+    }
+
+    const htmlFile = staticHtml[req.path];
+    if (htmlFile) {
+      return res.sendFile(path.join(MOBILE_WEB_DIST, htmlFile));
+    }
+
+    next();
+  });
+}
 
 // ===== ERROR HANDLING =====
 
@@ -1014,6 +1004,14 @@ app.listen(PORT, async () => {
   console.log(`📍 Buka browser: http://localhost:${PORT}`);
   console.log(`👤 Login: admin / admin123`);
   console.log(`📱 Status Bot: http://localhost:${PORT}/bot-status\n`);
+
+  // Reset status DB ke disconnected saat server start
+  // Ini penting untuk handle kasus server mati mendadak (tanpa graceful shutdown)
+  // sehingga status tidak tersisa 'connected' dari sesi lama
+  try {
+    db.prepare(`UPDATE bot_status SET status='disconnected', qr_string=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run();
+    console.log('🔄 Status bot direset ke disconnected (startup)');
+  } catch { /* tabel belum ada, abaikan */ }
 
   // Mulai bot WhatsApp
   try {

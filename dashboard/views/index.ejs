@@ -6,12 +6,66 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard - Chatbot Desa</title>
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Kartu status bot (akses cepat di dashboard utama) */
+    .bot-status-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+    .bot-status-head h3 { margin-bottom: 0.25rem; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1rem;
+      border-radius: 99px;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+    .status-badge.connected    { background: #d1fae5; color: #065f46; }
+    .status-badge.connecting   { background: #fef3c7; color: #92400e; }
+    .status-badge.disconnected { background: #fee2e2; color: #991b1b; }
+    .status-dot {
+      width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+    }
+    .status-dot.connected    { background: #10b981; }
+    .status-dot.connecting   { background: #f59e0b; animation: dashPulse 1s infinite; }
+    .status-dot.disconnected { background: #ef4444; }
+    @keyframes dashPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+      50%      { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+    }
+    .wa-nomor-box {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      font-weight: 600;
+      color: #166534;
+    }
+    .bot-status-actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .bot-status-actions .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .bot-status-actions .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  </style>
 </head>
 
 <body>
-  <!-- Notifikasi live chat (banner tengah-atas) -->
-  <div id="livechatNotifContainer"></div>
-
   <% if (admin.adminId) { %>
     <!-- Navbar -->
     <nav class="navbar">
@@ -39,6 +93,34 @@
         <div class="container">
           <h2>Dashboard Utama</h2>
           <p class="subtitle">Selamat datang di dashboard admin chatbot administrasi desa</p>
+
+          <!-- Kartu Status Bot + Reset WhatsApp -->
+          <div class="section" id="botStatusCard">
+            <div class="bot-status-head">
+              <div>
+                <h3>🤖 Status Bot WhatsApp</h3>
+                <span class="status-badge disconnected" id="dashStatusBadge">
+                  <span class="status-dot disconnected" id="dashStatusDot"></span>
+                  <span id="dashStatusText">⏳ Memuat status...</span>
+                </span>
+              </div>
+              <a href="/bot-status" class="btn btn-secondary btn-sm">Kelola di Status Bot</a>
+            </div>
+
+            <div class="wa-nomor-box" id="dashWaNomorBox" style="display:none;"></div>
+
+            <div class="bot-status-actions">
+              <button class="btn btn-primary" id="dashBtnConnect" style="display:none;" onclick="dashHubungkan()">
+                📲 Hubungkan WhatsApp
+              </button>
+              <button class="btn btn-secondary" id="dashBtnReset" onclick="dashResetWhatsApp()">
+                🔄 Reset WhatsApp
+              </button>
+            </div>
+            <p class="text-muted" style="margin-top:0.75rem;font-size:0.8rem;" id="dashInfoText">
+              Reset WhatsApp untuk mengganti akun / memindahkan ke perangkat lain (memerlukan scan QR baru).
+            </p>
+          </div>
 
           <!-- Stats Cards -->
           <div class="stats-grid">
@@ -160,71 +242,106 @@
         </div>
       </footer>
 
-      <!-- Notifikasi live chat: muncul saat ada sesi baru (fitur 98) -->
+      <!-- Kartu status bot: polling + tombol reset -->
       <script>
         (function () {
-          // Kumpulan ID sesi yang sudah dilihat/ditutup admin (per browser)
-          const KEY = 'livechatDismissedIds';
-          let dismissed = new Set();
-          try {
-            dismissed = new Set(JSON.parse(localStorage.getItem(KEY) || '[]'));
-          } catch (e) { dismissed = new Set(); }
-          let shownBannerId = null;
+          const badge = document.getElementById('dashStatusBadge');
+          const dot = document.getElementById('dashStatusDot');
+          const text = document.getElementById('dashStatusText');
+          const waBox = document.getElementById('dashWaNomorBox');
+          const btnReset = document.getElementById('dashBtnReset');
+          const btnConnect = document.getElementById('dashBtnConnect');
+          const infoText = document.getElementById('dashInfoText');
 
-          const container = document.getElementById('livechatNotifContainer');
-          if (!container) return;
+          function setStatusUI(status, waNomor) {
+            badge.className = 'status-badge ' + status;
+            dot.className = 'status-dot ' + status;
 
-          function simpanDismissed() {
-            try {
-              localStorage.setItem(KEY, JSON.stringify([...dismissed]));
-            } catch (e) { /* abaikan */ }
-          }
-
-          async function cekSesiBaru() {
-            try {
-              const res = await fetch('/api/live-chat', { credentials: 'include' });
-              if (res.status === 401) return; // belum login
-              const data = await res.json();
-              const aktif = (data.sesiList || []).filter(s => s.status === 'aktif');
-
-              // Sesi aktif yang belum dilihat → tampilkan banner
-              const baru = aktif.find(s => !dismissed.has(String(s.id)));
-
-              if (baru && shownBannerId !== baru.id) {
-                shownBannerId = baru.id;
-                container.innerHTML = `
-                  <div class="livechat-notif">
-                    <div class="lc-notif-icon">🔔</div>
-                    <div class="lc-notif-body">
-                      <div class="lc-notif-title">Permintaan Live Chat Masuk!</div>
-                      <div class="lc-notif-text">Pengguna +${baru.nomor_wa_bersih} meminta chat langsung dengan admin (fitur 98).</div>
-                    </div>
-                    <div class="lc-notif-actions">
-                      <a class="btn-notif-buka" href="/live-chat">Buka</a>
-                      <button class="btn-notif-tutup" title="Tutup" onclick="this.closest('.livechat-notif').remove(); dismissedAdd(${baru.id});">✕</button>
-                    </div>
-                  </div>
-                `;
+            if (status === 'connected') {
+              text.textContent = '🟢 Terhubung';
+              if (waNomor) {
+                waBox.style.display = 'block';
+                waBox.innerHTML = '📞 Terhubung sebagai: <strong>+' + waNomor + '</strong>';
               }
-
-              // Sesi aktif tidak ada lagi / sudah selesai → sembunyikan banner
-              if (aktif.length === 0 && shownBannerId !== null) {
-                shownBannerId = null;
-                container.innerHTML = '';
-              }
-            } catch (e) {
-              // abaikan, coba lagi nanti
+              btnConnect.style.display = 'none';
+              btnReset.style.display = 'inline-flex';
+              btnReset.disabled = false;
+              btnReset.textContent = '🔄 Reset WhatsApp';
+              infoText.textContent = 'Bot berjalan normal. Reset WhatsApp untuk mengganti akun / memindahkan ke perangkat lain (memerlukan scan QR baru).';
+            } else if (status === 'connecting') {
+              text.textContent = '🟡 Menghubungkan...';
+              waBox.style.display = 'none';
+              btnConnect.style.display = 'none';
+              btnReset.style.display = 'inline-flex';
+              btnReset.disabled = false;
+              btnReset.textContent = '🔄 Reset WhatsApp';
+              infoText.textContent = 'Menunggu scan QR. Buka halaman Status Bot untuk melihat QR code.';
+            } else {
+              text.textContent = '🔴 Terputus';
+              waBox.style.display = 'none';
+              btnConnect.style.display = 'inline-flex';
+              btnReset.style.display = 'none';
+              infoText.textContent = 'WhatsApp belum terhubung. Klik Hubungkan untuk mulai, atau buka halaman Status Bot.';
             }
           }
 
-          window.dismissedAdd = function (id) {
-            dismissed.add(String(id));
-            simpanDismissed();
-          };
+          async function pollStatus() {
+            try {
+              const res = await fetch('/api/bot/status', { credentials: 'include' });
+              if (res.status === 401) return;
+              const data = await res.json();
+              setStatusUI(data.status, data.wa_nomor);
+            } catch (e) { /* abaikan */ }
+          }
 
-          // Cek setiap 5 detik
-          cekSesiBaru();
-          setInterval(cekSesiBaru, 5000);
+          async function dashHubungkan() {
+            const btn = btnConnect;
+            btn.disabled = true;
+            btn.textContent = '⏳ Menghubungkan...';
+            try {
+              const res = await fetch('/api/bot/connect', { method: 'POST', credentials: 'include' });
+              const data = await res.json();
+              if (data.ok) {
+                setStatusUI('connecting', null);
+                alert('📲 Koneksi dimulai. Buka halaman Status Bot untuk scan QR code.');
+              } else {
+                alert('❌ Gagal: ' + (data.error || 'Error tidak diketahui'));
+              }
+            } catch (e) {
+              alert('❌ Gagal terhubung ke server.');
+            }
+            btn.disabled = false;
+            btn.textContent = '📲 Hubungkan WhatsApp';
+          }
+
+          async function dashResetWhatsApp() {
+            if (!confirm('Reset WhatsApp?\n\nIni akan:\n• Menghapus sesi login WhatsApp bot\n• Memerlukan scan QR baru\n• Bot offline sementara (~5 detik)\n\nLanjutkan?')) return;
+
+            btnReset.disabled = true;
+            btnReset.textContent = '⏳ Mereset...';
+            try {
+              const res = await fetch('/api/bot/reset', { method: 'POST', credentials: 'include' });
+              const data = await res.json();
+              if (data.ok) {
+                setStatusUI('connecting', null);
+                alert('🔄 Reset berhasil! Buka halaman Status Bot untuk scan QR code baru.');
+              } else {
+                alert('❌ Reset gagal: ' + (data.error || 'Error tidak diketahui'));
+              }
+            } catch (e) {
+              alert('❌ Gagal terhubung ke server.');
+            }
+            btnReset.disabled = false;
+            btnReset.textContent = '🔄 Reset WhatsApp';
+          }
+
+          // Ekspos ke global agar tombol onclick bisa memanggil
+          window.dashHubungkan = dashHubungkan;
+          window.dashResetWhatsApp = dashResetWhatsApp;
+
+          // Polling status setiap 5 detik
+          pollStatus();
+          setInterval(pollStatus, 5000);
         })();
       </script>
 </body>

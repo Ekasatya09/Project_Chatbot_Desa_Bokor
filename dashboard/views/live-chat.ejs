@@ -170,9 +170,6 @@
   </style>
 </head>
 <body>
-  <!-- Notifikasi live chat (banner tengah-atas) -->
-  <div id="livechatNotifContainer"></div>
-
 <% if (admin.adminId) { %>
   <!-- Navbar -->
   <nav class="navbar">
@@ -184,6 +181,7 @@
         <li><a href="/riwayat">Riwayat Chat</a></li>
         <li><a href="/statistik">Statistik</a></li>
         <li><a href="/live-chat" class="active">Live Chat</a></li>
+        <li><a href="/bot-status">Status Bot</a></li>
       </ul>
       <div class="navbar-user">
         <span>👤 <%= admin.adminNama || admin.adminUsername %></span>
@@ -369,7 +367,7 @@
   // ── Akhiri sesi ────────────────────────────────────────────────
   async function akhiriSesi() {
     if (!sesiAktifId) return;
-    if (!confirm(`Yakin ingin mengakhiri sesi dengan +${sesiAktifNomor}?\n\nPengguna akan mendapat notifikasi bahwa sesi telah berakhir.`)) return;
+    if (!confirm(`Yakin ingin mengakhiri sesi dengan +${sesiAktifNomor}?`)) return;
 
     try {
       const res = await fetch(`/api/live-chat/${sesiAktifId}/akhiri`, {
@@ -378,7 +376,7 @@
       });
       const data = await res.json();
       if (data.ok) {
-        toast('✅ Sesi berhasil diakhiri. Bot akan mengirim notifikasi ke pengguna dalam 1 menit.');
+        toast('✅ Sesi berhasil diakhiri.');
         await refreshSesiList();
         await muatPesan();
       } else {
@@ -436,70 +434,6 @@
     await refreshSesiList();
     if (sesiAktifId) await muatPesan();
   }, 10000);
-</script>
-
-<!-- Notifikasi live chat: muncul saat ada sesi baru (fitur 98) -->
-<script>
-  (function () {
-    const KEY = 'livechatDismissedIds';
-    let dismissed = new Set();
-    try {
-      dismissed = new Set(JSON.parse(localStorage.getItem(KEY) || '[]'));
-    } catch (e) { dismissed = new Set(); }
-    let shownBannerId = null;
-
-    const container = document.getElementById('livechatNotifContainer');
-    if (!container) return;
-
-    function simpanDismissed() {
-      try {
-        localStorage.setItem(KEY, JSON.stringify([...dismissed]));
-      } catch (e) { /* abaikan */ }
-    }
-
-    async function cekSesiBaru() {
-      try {
-        const res = await fetch('/api/live-chat', { credentials: 'include' });
-        if (res.status === 401) return;
-        const data = await res.json();
-        const aktif = (data.sesiList || []).filter(s => s.status === 'aktif');
-
-        const baru = aktif.find(s => !dismissed.has(String(s.id)));
-
-        if (baru && shownBannerId !== baru.id) {
-          shownBannerId = baru.id;
-          container.innerHTML = `
-            <div class="livechat-notif">
-              <div class="lc-notif-icon">🔔</div>
-              <div class="lc-notif-body">
-                <div class="lc-notif-title">Permintaan Live Chat Masuk!</div>
-                <div class="lc-notif-text">Pengguna +${baru.nomor_wa_bersih} meminta chat langsung dengan admin (fitur 98).</div>
-              </div>
-              <div class="lc-notif-actions">
-                <a class="btn-notif-buka" href="/live-chat">Buka</a>
-                <button class="btn-notif-tutup" title="Tutup" onclick="this.closest('.livechat-notif').remove(); dismissedAdd(${baru.id});">✕</button>
-              </div>
-            </div>
-          `;
-        }
-
-        if (aktif.length === 0 && shownBannerId !== null) {
-          shownBannerId = null;
-          container.innerHTML = '';
-        }
-      } catch (e) {
-        // abaikan
-      }
-    }
-
-    window.dismissedAdd = function (id) {
-      dismissed.add(String(id));
-      simpanDismissed();
-    };
-
-    cekSesiBaru();
-    setInterval(cekSesiBaru, 5000);
-  })();
 </script>
 
 <footer class="footer">

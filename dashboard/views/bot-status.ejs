@@ -520,7 +520,7 @@
       });
       const data = await res.json();
       if (data.ok) {
-        toast('🗑️ WhatsApp berhasil diputuskan. Bot tidak aktif.');
+        toast('📅 WhatsApp diputuskan. Klik Hubungkan untuk menyambung kembali (tanpa scan QR ulang).');
         setStatusUI('disconnected', null);
       } else {
         toast('❌ Gagal memutuskan: ' + (data.error || 'Error tidak diketahui'));

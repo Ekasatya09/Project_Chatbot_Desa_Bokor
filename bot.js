@@ -152,7 +152,7 @@ function simpanLogChat(nomorWa, pesanMasuk, balasanBot, layananId = null) {
  */
 function getAdminNomor() {
   try {
-    const admin = db.prepare('SELECT nomor_wa FROM admin WHERE nomor_wa IS NOT NULL AND nomor_wa != "" LIMIT 1').get();
+    const admin = db.prepare('SELECT nomor_wa FROM admin WHERE nomor_wa IS NOT NULL AND nomor_wa != \'\' LIMIT 1').get();
     if (!admin) return null;
     // Format ke format Baileys: 628xxx@s.whatsapp.net
     let nomor = admin.nomor_wa.replace(/\D/g, '');
@@ -442,10 +442,6 @@ async function prosesAdminMessage(sock, nomorAdmin, isiPesan) {
       if (sesiUser.get(nomor_wa)?.state === 'live_chat') {
         sesiUser.delete(nomor_wa);
       }
-      // Beritahu user
-      await sock.sendMessage(nomor_wa, {
-        text: '✅ Sesi chat dengan admin telah selesai. Terima kasih!\n\n💡 Ketik *menu* untuk kembali ke menu utama.'
-      });
       console.log(`🔴 Sesi live chat ${nomor_wa} diakhiri oleh admin`);
     }
     await sock.sendMessage(nomorAdmin, { text: `✅ ${sesiList.length} sesi live chat telah diakhiri.` });
@@ -494,9 +490,6 @@ async function cekSesiExpired(sock) {
       if (sesiUser.get(nomor_wa)?.state === 'live_chat') {
         sesiUser.delete(nomor_wa);
       }
-      await sock.sendMessage(nomor_wa, {
-        text: '⏰ Sesi chat dengan admin telah berakhir (batas waktu 24 jam).\n\n💡 Ketik *menu* untuk kembali ke menu utama.'
-      });
       console.log(`⏰ Sesi live chat ${nomor_wa} expired otomatis`);
     }
 
@@ -612,9 +605,12 @@ async function prosesPesan(sock, pesan) {
 
         // Beritahu user
         await kirimBalasan(
-          '✅ Permintaan Anda telah diterima.\n\n' +
-          '👤 Admin akan segera merespons. Silakan ketik pesan Anda sekarang.\n\n' +
-          '💡 Sesi ini aktif selama *24 jam*. Ketik *menu* jika ingin membatalkan.'
+          '✨ *✅ PERMINTAAN ANDA TELAH DITERIMA!* ✨\n\n' +
+          '🎉 Permintaan Anda sudah masuk ke admin desa.\n' +
+          '👤 Admin akan segera merespons percakapan Anda.\n\n' +
+          '📝 Silakan ketik pesan Anda sekarang.\n\n' +
+          '⏳ Sesi ini aktif selama *24 jam*.\n' +
+          '💡 Ketik *menu* jika ingin membatalkan.'
         );
 
         // Notifikasi ke admin WA
@@ -675,7 +671,6 @@ async function prosesPesan(sock, pesan) {
       } else {
         // Sesi sudah tidak aktif tapi state masih live_chat (misal: expired)
         sesiUser.delete(nomorPengirim);
-        await kirimBalasan('⏰ Sesi live chat Anda telah berakhir.\n\n💡 Ketik *menu* untuk kembali ke menu utama.');
         await sock.sendPresenceUpdate('paused', nomorPengirim);
         return;
       }
