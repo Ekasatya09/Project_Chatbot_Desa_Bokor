@@ -67,9 +67,11 @@
                       <thead>
                         <tr>
                           <th width="5%">No</th>
-                          <th width="45%">Nama Layanan</th>
-                          <th width="15%">Jumlah Syarat</th>
-                          <th width="20%">Terakhir Diubah</th>
+                          <th width="30%">Nama Layanan</th>
+                          <th width="15%">Kategori</th>
+                          <th width="10%">Syarat</th>
+                          <th width="10%">Sub-Opsi</th>
+                          <th width="15%">Terakhir Diubah</th>
                           <th width="15%">Aksi</th>
                         </tr>
                       </thead>
@@ -83,7 +85,17 @@
                                 <%= layanan.nama %>
                               </strong></td>
                             <td>
+                              <% if (layanan.kategori_nama) { %>
+                                <span class="badge"><%= layanan.kategori_nama %></span>
+                              <% } else { %>
+                                <span class="text-muted">-</span>
+                              <% } %>
+                            </td>
+                            <td>
                               <%= layanan.jumlah_syarat %> syarat
+                            </td>
+                            <td>
+                              <%= layanan.jumlah_sub_opsi %> sub
                             </td>
                             <td>
                               <%= new Date(layanan.updated_at).toLocaleDateString('id-ID') %>

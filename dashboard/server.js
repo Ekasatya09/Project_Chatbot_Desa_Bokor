@@ -189,11 +189,17 @@ app.get('/', requireAuth, (req, res) => {
 // Daftar layanan
 app.get('/layanan', requireAuth, (req, res) => {
   const layananList = db.prepare(`
-    SELECT l.*, COUNT(s.id) as jumlah_syarat
+    SELECT
+      l.*,
+      COUNT(DISTINCT s.id)  AS jumlah_syarat,
+      COUNT(DISTINCT so.id) AS jumlah_sub_opsi,
+      k.nama                AS kategori_nama
     FROM layanan l
-    LEFT JOIN syarat s ON l.id = s.layanan_id
+    LEFT JOIN syarat   s  ON l.id = s.layanan_id
+    LEFT JOIN sub_opsi so ON l.id = so.layanan_id
+    LEFT JOIN kategori k  ON l.kategori_id = k.id
     GROUP BY l.id
-    ORDER BY l.id
+    ORDER BY k.urutan, k.nama, l.nama
   `).all();
   
   res.render('layanan/index', {
@@ -204,22 +210,25 @@ app.get('/layanan', requireAuth, (req, res) => {
 
 // Form tambah layanan
 app.get('/layanan/tambah', requireAuth, (req, res) => {
+  const kategoriList = db.prepare('SELECT id, nama FROM kategori ORDER BY urutan, nama').all();
   res.render('layanan/form', {
     admin: req.session,
     layanan: null,
     syaratList: [],
+    subOpsiList: [],
+    kategoriList,
     mode: 'tambah'
   });
 });
 
 // Proses tambah layanan
 app.post('/layanan/tambah', requireAuth, (req, res) => {
-  const { nama, syarat } = req.body;
+  const { nama, kategori_id, syarat, sub_opsi_nama, sub_opsi_syarat } = req.body;
   
   try {
     // Start transaction
-    const insertLayanan = db.prepare('INSERT INTO layanan (nama) VALUES (?)');
-    const result = insertLayanan.run(nama);
+    const insertLayanan = db.prepare('INSERT INTO layanan (nama, kategori_id) VALUES (?, ?)');
+    const result = insertLayanan.run(nama, kategori_id || null);
     const layananId = result.lastInsertRowid;
     
     // Insert syarat (jika ada)
@@ -231,6 +240,30 @@ app.post('/layanan/tambah', requireAuth, (req, res) => {
       syarat.forEach((desc, index) => {
         if (desc && desc.trim()) {
           insertSyarat.run(layananId, desc.trim(), index + 1);
+        }
+      });
+    }
+    
+    // Insert sub-opsi (jika ada)
+    if (Array.isArray(sub_opsi_nama)) {
+      const insertSO = db.prepare(
+        'INSERT INTO sub_opsi (layanan_id, nama, urutan) VALUES (?, ?, ?)'
+      );
+      const insertSS = db.prepare(
+        'INSERT INTO syarat_sub_opsi (sub_opsi_id, deskripsi, urutan) VALUES (?, ?, ?)'
+      );
+      
+      sub_opsi_nama.forEach((soNama, soIndex) => {
+        if (!soNama || !soNama.trim()) return;
+        const soId = insertSO.run(layananId, soNama.trim(), soIndex + 1).lastInsertRowid;
+        
+        const syaratSo = (sub_opsi_syarat && sub_opsi_syarat[soIndex]) || [];
+        if (Array.isArray(syaratSo)) {
+          syaratSo.forEach((desc, sIdx) => {
+            if (desc && desc.trim()) {
+              insertSS.run(soId, desc.trim(), sIdx + 1);
+            }
+          });
         }
       });
     }
@@ -254,22 +287,39 @@ app.get('/layanan/edit/:id', requireAuth, (req, res) => {
     'SELECT * FROM syarat WHERE layanan_id = ? ORDER BY urutan'
   ).all(req.params.id);
   
+  const subOpsiRows = db.prepare(
+    'SELECT * FROM sub_opsi WHERE layanan_id = ? ORDER BY urutan'
+  ).all(req.params.id);
+  
+  // Ambil syarat per sub-opsi
+  const stmtSyaratSub = db.prepare(
+    'SELECT * FROM syarat_sub_opsi WHERE sub_opsi_id = ? ORDER BY urutan'
+  );
+  const subOpsiList = subOpsiRows.map(so => ({
+    ...so,
+    syaratList: stmtSyaratSub.all(so.id)
+  }));
+  
+  const kategoriList = db.prepare('SELECT id, nama FROM kategori ORDER BY urutan, nama').all();
+  
   res.render('layanan/form', {
     admin: req.session,
     layanan,
     syaratList,
+    subOpsiList,
+    kategoriList,
     mode: 'edit'
   });
 });
 
 // Proses edit layanan
 app.post('/layanan/edit/:id', requireAuth, (req, res) => {
-  const { nama, syarat, syarat_id } = req.body;
+  const { nama, kategori_id, syarat, syarat_id, sub_opsi_nama, sub_opsi_syarat } = req.body;
   const layananId = req.params.id;
   
   try {
-    // Update nama layanan
-    db.prepare('UPDATE layanan SET nama = ? WHERE id = ?').run(nama, layananId);
+    // Update nama layanan + kategori
+    db.prepare('UPDATE layanan SET nama = ?, kategori_id = ? WHERE id = ?').run(nama, kategori_id || null, layananId);
     
     // Hapus semua syarat lama
     db.prepare('DELETE FROM syarat WHERE layanan_id = ?').run(layananId);
@@ -283,6 +333,33 @@ app.post('/layanan/edit/:id', requireAuth, (req, res) => {
       syarat.forEach((desc, index) => {
         if (desc && desc.trim()) {
           insertSyarat.run(layananId, desc.trim(), index + 1);
+        }
+      });
+    }
+    
+    // Hapus semua sub-opsi lama (dan syarat_sub_opsi via CASCADE)
+    db.prepare('DELETE FROM sub_opsi WHERE layanan_id = ?').run(layananId);
+    
+    // Insert sub-opsi baru (jika ada)
+    if (Array.isArray(sub_opsi_nama)) {
+      const insertSO = db.prepare(
+        'INSERT INTO sub_opsi (layanan_id, nama, urutan) VALUES (?, ?, ?)'
+      );
+      const insertSS = db.prepare(
+        'INSERT INTO syarat_sub_opsi (sub_opsi_id, deskripsi, urutan) VALUES (?, ?, ?)'
+      );
+      
+      sub_opsi_nama.forEach((soNama, soIndex) => {
+        if (!soNama || !soNama.trim()) return;
+        const soId = insertSO.run(layananId, soNama.trim(), soIndex + 1).lastInsertRowid;
+        
+        const syaratSo = (sub_opsi_syarat && sub_opsi_syarat[soIndex]) || [];
+        if (Array.isArray(syaratSo)) {
+          syaratSo.forEach((desc, sIdx) => {
+            if (desc && desc.trim()) {
+              insertSS.run(soId, desc.trim(), sIdx + 1);
+            }
+          });
         }
       });
     }

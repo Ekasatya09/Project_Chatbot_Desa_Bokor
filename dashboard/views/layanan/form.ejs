@@ -57,6 +57,21 @@
                   placeholder="Contoh: Akta Kelahiran">
               </div>
 
+              <!-- Kategori -->
+              <div class="form-group">
+                <label for="kategoriId">Kategori</label>
+                <select id="kategoriId" name="kategori_id">
+                  <option value="">— Pilih Kategori (opsional) —</option>
+                  <% kategoriList.forEach(kat => { %>
+                    <option value="<%= kat.id %>"
+                      <%= layanan && layanan.kategori_id == kat.id ? 'selected' : '' %>>
+                      <%= kat.nama %>
+                    </option>
+                  <% }); %>
+                </select>
+                <p class="help-text">💡 Kelompokkan layanan ini ke dalam kategori (misal: KK, KTP, Akta).</p>
+              </div>
+
               <!-- Syarat-syarat -->
               <div class="form-group">
                 <label>Syarat-syarat yang Dibutuhkan</label>
@@ -86,6 +101,51 @@
                 <button type="button" class="btn btn-secondary" onclick="tambahSyarat()">
                   + Tambah Syarat
                 </button>
+              </div>
+
+              <!-- Sub-Opsi -->
+              <div class="form-group">
+                <label>Sub-Opsi / Jenis Layanan (opsional)</label>
+                <p class="help-text">
+                  Tambahkan sub-opsi bila layanan ini punya beberapa jenis (misal KTP: "Karena Hilang" dan
+                  "Baru"). Setiap sub-opsi bisa punya syarat sendiri.
+                </p>
+
+                <div id="subOpsiContainer">
+                  <% if (subOpsiList && subOpsiList.length > 0) { %>
+                    <% subOpsiList.forEach((so, soIndex) => { %>
+                      <div class="sub-opsi-item" data-index="<%= soIndex %>">
+                        <div class="sub-opsi-header">
+                          <span class="sub-opsi-number"><%= soIndex + 1 %>.</span>
+                          <input type="text" name="sub_opsi_nama[]" value="<%= so.nama %>"
+                            placeholder="Nama sub-opsi (misal: Karena Hilang)">
+                          <button type="button" class="btn btn-sm btn-danger" onclick="hapusSubOpsi(this)">×</button>
+                        </div>
+                        <div class="sub-opsi-syarat">
+                          <% if (so.syaratList && so.syaratList.length > 0) { %>
+                            <% so.syaratList.forEach((ss, ssIdx) => { %>
+                              <div class="syarat-item">
+                                <span class="syarat-number"><%= ssIdx + 1 %>.</span>
+                                <input type="text" name="sub_opsi_syarat[<%= soIndex %>][]" value="<%= ss.deskripsi %>"
+                                  placeholder="Syarat sub-opsi">
+                                <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
+                              </div>
+                            <% }); %>
+                          <% } else { %>
+                            <div class="syarat-item">
+                              <span class="syarat-number">1.</span>
+                              <input type="text" name="sub_opsi_syarat[<%= soIndex %>][]" placeholder="Syarat sub-opsi">
+                              <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
+                            </div>
+                          <% } %>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="tambahSyaratSub(this)">+ Syarat</button>
+                      </div>
+                    <% }); %>
+                  <% } %>
+                </div>
+
+                <button type="button" class="btn btn-secondary" onclick="tambahSubOpsi()">+ Tambah Sub-Opsi</button>
               </div>
 
               <!-- Submit Buttons -->
@@ -129,9 +189,11 @@
         }
 
         function hapusSyarat(button) {
-          const syaratItems = document.querySelectorAll('.syarat-item');
-          if (syaratItems.length > 1) {
-            button.parentElement.remove();
+          const item = button.closest('.syarat-item');
+          const container = item.parentElement;
+          const items = container.querySelectorAll('.syarat-item');
+          if (items.length > 1) {
+            item.remove();
             updateNomor();
           } else {
             alert('Minimal harus ada 1 syarat!');
@@ -144,6 +206,68 @@
             item.querySelector('.syarat-number').textContent = (index + 1) + '.';
           });
           syaratCount = items.length;
+        }
+
+        // ── Sub-Opsi ──────────────────────────────────────────────
+        let subOpsiCount = document.querySelectorAll('.sub-opsi-item').length;
+
+        function tambahSubOpsi() {
+          const container = document.getElementById('subOpsiContainer');
+          const div = document.createElement('div');
+          div.className = 'sub-opsi-item';
+          div.innerHTML = `
+            <div class="sub-opsi-header">
+              <span class="sub-opsi-number">${subOpsiCount + 1}.</span>
+              <input type="text" name="sub_opsi_nama[]" placeholder="Nama sub-opsi (misal: Karena Hilang)">
+              <button type="button" class="btn btn-sm btn-danger" onclick="hapusSubOpsi(this)">×</button>
+            </div>
+            <div class="sub-opsi-syarat">
+              <div class="syarat-item">
+                <span class="syarat-number">1.</span>
+                <input type="text" name="sub_opsi_syarat[${subOpsiCount}][]" placeholder="Syarat sub-opsi">
+                <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="tambahSyaratSub(this)">+ Syarat</button>
+          `;
+          container.appendChild(div);
+          subOpsiCount++;
+          updateSubOpsiNomor();
+        }
+
+        function hapusSubOpsi(button) {
+          button.closest('.sub-opsi-item').remove();
+          updateSubOpsiNomor();
+        }
+
+        function tambahSyaratSub(btn) {
+          const subItem = btn.closest('.sub-opsi-item');
+          const syaratBox = subItem.querySelector('.sub-opsi-syarat');
+          const idx = subItem.querySelector('.sub-opsi-number').textContent.replace('.', '') - 1;
+          const div = document.createElement('div');
+          div.className = 'syarat-item';
+          div.innerHTML = `
+            <span class="syarat-number">${syaratBox.children.length + 1}.</span>
+            <input type="text" name="sub_opsi_syarat[${idx}][]" placeholder="Syarat sub-opsi">
+            <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
+          `;
+          syaratBox.appendChild(div);
+          updateSubSyaratNomor(syaratBox);
+        }
+
+        function updateSubOpsiNomor() {
+          const items = document.querySelectorAll('.sub-opsi-item');
+          items.forEach((item, index) => {
+            item.querySelector('.sub-opsi-number').textContent = (index + 1) + '.';
+          });
+          subOpsiCount = items.length;
+        }
+
+        function updateSubSyaratNomor(box) {
+          const items = box.querySelectorAll('.syarat-item');
+          items.forEach((item, index) => {
+            item.querySelector('.syarat-number').textContent = (index + 1) + '.';
+          });
         }
 
         // Validasi form sebelum submit
