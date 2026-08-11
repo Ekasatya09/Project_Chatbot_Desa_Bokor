@@ -21,6 +21,7 @@
         <ul class="navbar-menu">
           <li><a href="/">Dashboard</a></li>
           <li><a href="/layanan" class="active">Layanan</a></li>
+          <li><a href="/kategori">Kategori</a></li>
           <li><a href="/riwayat">Riwayat Chat</a></li>
           <li><a href="/statistik">Statistik</a></li>
           <li><a href="/live-chat">Live Chat</a></li>
@@ -62,12 +63,11 @@
                 <label for="kategoriId">Kategori</label>
                 <select id="kategoriId" name="kategori_id">
                   <option value="">— Pilih Kategori (opsional) —</option>
-                  <% kategoriList.forEach(kat => { %>
-                    <option value="<%= kat.id %>"
-                      <%= layanan && layanan.kategori_id == kat.id ? 'selected' : '' %>>
+                  <% kategoriList.forEach(kat=> { %>
+                    <option value="<%= kat.id %>" <%=layanan && layanan.kategori_id==kat.id ? 'selected' : '' %>>
                       <%= kat.nama %>
                     </option>
-                  <% }); %>
+                    <% }); %>
                 </select>
                 <p class="help-text">💡 Kelompokkan layanan ini ke dalam kategori (misal: KK, KTP, Akta).</p>
               </div>
@@ -112,37 +112,45 @@
                 </p>
 
                 <div id="subOpsiContainer">
-                  <% if (subOpsiList && subOpsiList.length > 0) { %>
-                    <% subOpsiList.forEach((so, soIndex) => { %>
+                  <% if (subOpsiList && subOpsiList.length> 0) { %>
+                    <% subOpsiList.forEach((so, soIndex)=> { %>
                       <div class="sub-opsi-item" data-index="<%= soIndex %>">
                         <div class="sub-opsi-header">
-                          <span class="sub-opsi-number"><%= soIndex + 1 %>.</span>
+                          <span class="sub-opsi-number">
+                            <%= soIndex + 1 %>.
+                          </span>
                           <input type="text" name="sub_opsi_nama[]" value="<%= so.nama %>"
                             placeholder="Nama sub-opsi (misal: Karena Hilang)">
                           <button type="button" class="btn btn-sm btn-danger" onclick="hapusSubOpsi(this)">×</button>
                         </div>
                         <div class="sub-opsi-syarat">
-                          <% if (so.syaratList && so.syaratList.length > 0) { %>
-                            <% so.syaratList.forEach((ss, ssIdx) => { %>
+                          <% if (so.syaratList && so.syaratList.length> 0) { %>
+                            <% so.syaratList.forEach((ss, ssIdx)=> { %>
                               <div class="syarat-item">
-                                <span class="syarat-number"><%= ssIdx + 1 %>.</span>
+                                <span class="syarat-number">
+                                  <%= ssIdx + 1 %>.
+                                </span>
                                 <input type="text" name="sub_opsi_syarat[<%= soIndex %>][]" value="<%= ss.deskripsi %>"
                                   placeholder="Syarat sub-opsi">
-                                <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
+                                <button type="button" class="btn btn-sm btn-danger"
+                                  onclick="hapusSyarat(this)">×</button>
                               </div>
-                            <% }); %>
-                          <% } else { %>
-                            <div class="syarat-item">
-                              <span class="syarat-number">1.</span>
-                              <input type="text" name="sub_opsi_syarat[<%= soIndex %>][]" placeholder="Syarat sub-opsi">
-                              <button type="button" class="btn btn-sm btn-danger" onclick="hapusSyarat(this)">×</button>
-                            </div>
-                          <% } %>
+                              <% }); %>
+                                <% } else { %>
+                                  <div class="syarat-item">
+                                    <span class="syarat-number">1.</span>
+                                    <input type="text" name="sub_opsi_syarat[<%= soIndex %>][]"
+                                      placeholder="Syarat sub-opsi">
+                                    <button type="button" class="btn btn-sm btn-danger"
+                                      onclick="hapusSyarat(this)">×</button>
+                                  </div>
+                                  <% } %>
                         </div>
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="tambahSyaratSub(this)">+ Syarat</button>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="tambahSyaratSub(this)">+
+                          Syarat</button>
                       </div>
-                    <% }); %>
-                  <% } %>
+                      <% }); %>
+                        <% } %>
                 </div>
 
                 <button type="button" class="btn btn-secondary" onclick="tambahSubOpsi()">+ Tambah Sub-Opsi</button>

@@ -19,6 +19,7 @@
         <ul class="navbar-menu">
           <li><a href="/">Dashboard</a></li>
           <li><a href="/layanan" class="active">Layanan</a></li>
+          <li><a href="/kategori">Kategori</a></li>
           <li><a href="/riwayat">Riwayat Chat</a></li>
           <li><a href="/statistik">Statistik</a></li>
           <li><a href="/live-chat">Live Chat</a></li>
@@ -86,10 +87,12 @@
                               </strong></td>
                             <td>
                               <% if (layanan.kategori_nama) { %>
-                                <span class="badge"><%= layanan.kategori_nama %></span>
-                              <% } else { %>
-                                <span class="text-muted">-</span>
-                              <% } %>
+                                <span class="badge">
+                                  <%= layanan.kategori_nama %>
+                                </span>
+                                <% } else { %>
+                                  <span class="text-muted">-</span>
+                                  <% } %>
                             </td>
                             <td>
                               <%= layanan.jumlah_syarat %> syarat

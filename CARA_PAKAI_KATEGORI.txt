@@ -1,0 +1,159 @@
+==========================================
+ 📂 CARA MENGGUNAKAN FITUR KATEGORI BARU
+==========================================
+
+LANGKAH 1: Jalankan Migrasi Database
+-------------------------------------
+Buka terminal/command prompt di folder project, lalu jalankan:
+
+    node migrate-kategori.js
+
+Hasilnya akan menampilkan:
+- ✅ Tabel kategori sudah ada
+- ✅ Kolom kategori_id sudah ada
+- 📊 Total kategori dalam database: X
+- 📂 Daftar kategori yang sudah ada
+
+LANGKAH 2: Start Server Dashboard
+----------------------------------
+Jalankan server dashboard dengan perintah:
+
+    npm start
+
+Atau manual:
+
+    node dashboard/server.js
+
+Server akan jalan di: http://localhost:3000
+
+LANGKAH 3: Login ke Dashboard
+------------------------------
+1. Buka browser
+2. Akses: http://localhost:3000
+3. Login dengan kredensial admin Anda
+
+LANGKAH 4: Akses Menu Kategori
+-------------------------------
+1. Setelah login, lihat navbar di bagian atas
+2. Klik menu "Kategori"
+3. Atau langsung akses: http://localhost:3000/kategori
+
+==========================================
+ ✨ FITUR-FITUR YANG TERSEDIA
+==========================================
+
+1. TAMBAH KATEGORI BARU
+   - Klik tombol "➕ Tambah Kategori"
+   - Isi nama kategori (contoh: "Surat Pengantar")
+   - Isi urutan (angka, contoh: 5)
+   - Klik "Simpan"
+
+2. EDIT KATEGORI
+   - Klik tombol "✏️ Edit" pada kategori yang ingin diubah
+   - Modal akan muncul dengan data saat ini
+   - Ubah nama atau urutan
+   - Klik "Simpan"
+
+3. HAPUS KATEGORI
+   - Klik tombol "🗑️ Hapus" pada kategori yang ingin dihapus
+   - Konfirmasi dengan klik "OK"
+   - Kategori akan dihapus (layanan tetap aman)
+
+4. GUNAKAN KATEGORI DI LAYANAN
+   - Buka menu "Layanan" → "Tambah Layanan"
+   - Pilih kategori dari dropdown
+   - Kategori ini opsional (boleh tidak dipilih)
+
+==========================================
+ 🎯 KATEGORI DEFAULT YANG SUDAH ADA
+==========================================
+
+Setelah migrasi, kategori berikut otomatis tersedia:
+- Urutan 0: KK (Kartu Keluarga)
+- Urutan 1: KTP
+- Urutan 2: Akta Kelahiran
+- Urutan 3: Akta
+- Urutan 3: KTA
+- Urutan 4: Surat Keterangan
+- Urutan 99: Lainnya
+
+Anda bisa edit atau hapus kategori ini sesuai kebutuhan.
+
+==========================================
+ 📋 TIPS PENGGUNAAN
+==========================================
+
+1. URUTAN TAMPILAN
+   - Gunakan angka untuk mengurutkan
+   - Angka lebih kecil = tampil lebih dulu
+   - Contoh: 0, 1, 2, 3, dst.
+   - Gunakan 99 untuk kategori "Lainnya"
+
+2. PENAMAAN KATEGORI
+   - Gunakan nama singkat dan jelas
+   - Contoh baik: "KK", "KTP", "Akta"
+   - Hindari nama terlalu panjang
+
+3. PENGELOMPOKAN
+   - Kelompokkan layanan berdasarkan dokumen
+   - Contoh:
+     * Kategori "KK": KK Baru, KK Hilang, KK Rusak
+     * Kategori "Akta": Akta Kelahiran, Akta Kematian
+
+==========================================
+ 🔧 TROUBLESHOOTING
+==========================================
+
+MASALAH: Menu Kategori tidak muncul
+SOLUSI:
+  1. Pastikan server sudah direstart
+  2. Clear cache browser (Ctrl + F5)
+  3. Cek apakah login berhasil
+
+MASALAH: Error saat akses /kategori
+SOLUSI:
+  1. Pastikan migrasi sudah dijalankan
+  2. Cek console server untuk error
+  3. Pastikan database desa.db tidak corrupt
+
+MASALAH: Kategori tidak muncul di dropdown layanan
+SOLUSI:
+  1. Pastikan ada kategori di database
+  2. Restart server
+  3. Cek browser console untuk error
+
+==========================================
+ 📁 FILE-FILE YANG DITAMBAHKAN/DIUBAH
+==========================================
+
+FILE BARU:
+✅ dashboard/views/kategori/index.ejs
+✅ db/add_kategori.sql
+✅ migrate-kategori.js
+✅ KATEGORI_README.md
+✅ FITUR_KATEGORI_BARU.md
+✅ CARA_PAKAI_KATEGORI.txt (file ini)
+
+FILE YANG DIUBAH:
+✅ dashboard/server.js (tambah routes kategori)
+✅ dashboard/views/index.ejs (update navbar)
+✅ dashboard/views/layanan/index.ejs (update navbar)
+✅ dashboard/views/layanan/form.ejs (update navbar)
+✅ dashboard/views/riwayat.ejs (update navbar)
+✅ dashboard/views/statistik.ejs (update navbar)
+✅ dashboard/views/live-chat.ejs (update navbar)
+✅ dashboard/views/bot-status.ejs (update navbar)
+✅ dashboard/views/layout.ejs (update navbar)
+
+==========================================
+ ✅ SELESAI!
+==========================================
+
+Fitur kategori sudah siap digunakan!
+Silakan restart server dan coba fitur CRUD kategori.
+
+Jika ada pertanyaan, lihat:
+- KATEGORI_README.md (panduan lengkap)
+- FITUR_KATEGORI_BARU.md (detail teknis)
+
+Selamat mencoba! 🎉

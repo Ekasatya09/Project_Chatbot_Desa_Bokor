@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kelola Kategori - Dashboard Chatbot Desa</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .kategori-list {
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .kategori-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid #e5e7eb;
+      transition: background-color 0.2s;
+    }
+
+    .kategori-item:hover {
+      background-color: #f9fafb;
+    }
+
+    .kategori-item:last-child {
+      border-bottom: none;
+    }
+
+    .kategori-info {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .kategori-urutan {
+      background: #3b82f6;
+      color: white;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .kategori-detail h3 {
+      margin: 0 0 0.25rem 0;
+      font-size: 1rem;
+      color: #1f2937;
+    }
+
+    .kategori-detail p {
+      margin: 0;
+      font-size: 0.875rem;
+      color: #6b7280;
+    }
+
+    .kategori-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .btn-icon {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      text-decoration: none;
+    }
+
+    .btn-edit {
+      background: #3b82f6;
+      color: white;
+    }
+
+    .btn-edit:hover {
+      background: #2563eb;
+    }
+
+    .btn-delete {
+      background: #ef4444;
+      color: white;
+    }
+
+    .btn-delete:hover {
+      background: #dc2626;
+    }
+
+    .btn-add {
+      background: #10b981;
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 500;
+      transition: all 0.2s;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    .btn-add:hover {
+      background: #059669;
+    }
+
+    .empty-state {
+      padding: 3rem;
+      text-align: center;
+      color: #6b7280;
+    }
+
+    .empty-state-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+
+    .alert {
+      padding: 1rem;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+    }
+
+    .alert-success {
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid #6ee7b7;
+    }
+
+    .alert-error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fca5a5;
+    }
+
+    /* Modal Styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.5);
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal.active {
+      display: flex;
+    }
+
+    .modal-content {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 500px;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .modal-header h3 {
+      margin: 0;
+      font-size: 1.25rem;
+      color: #1f2937;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      color: #6b7280;
+      padding: 0;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-close:hover {
+      color: #1f2937;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+      color: #374151;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+      margin-top: 1.5rem;
+    }
+
+    .btn-cancel {
+      background: #e5e7eb;
+      color: #374151;
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+
+    .btn-cancel:hover {
+      background: #d1d5db;
+    }
+
+    .btn-save {
+      background: #3b82f6;
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+
+    .btn-save:hover {
+      background: #2563eb;
+    }
+  </style>
+</head>
+
+<body>
+  <% if (admin.adminId) { %>
+    <!-- Navbar -->
+    <nav class="navbar">
+      <div class="container">
+        <div class="navbar-brand">
+          <h1>🏛️ Dashboard Chatbot Desa</h1>
+        </div>
+        <ul class="navbar-menu">
+          <li><a href="/">Dashboard</a></li>
+          <li><a href="/layanan">Layanan</a></li>
+          <li><a href="/kategori" class="active">Kategori</a></li>
+          <li><a href="/riwayat">Riwayat Chat</a></li>
+          <li><a href="/statistik">Statistik</a></li>
+          <li><a href="/live-chat">Live Chat</a></li>
+          <li><a href="/bot-status">Status Bot</a></li>
+        </ul>
+        <div class="navbar-user">
+          <span>👤 <%= admin.adminNama || admin.adminUsername %></span>
+          <a href="/logout" class="btn-logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+  <% } %>
+
+  <main class="main-content">
+    <div class="container">
+      <div class="page-header">
+        <div>
+          <h2>📂 Kelola Kategori</h2>
+          <p class="subtitle">Atur kategori untuk mengelompokkan layanan</p>
+        </div>
+        <button class="btn-add" onclick="openModalTambah()">
+          ➕ Tambah Kategori
+        </button>
+      </div>
+
+      <!-- Alert Messages -->
+      <% if (typeof success !== 'undefined') { %>
+        <div class="alert alert-success">
+          <% if (success === 'tambah') { %>
+            ✅ Kategori berhasil ditambahkan!
+          <% } else if (success === 'edit') { %>
+            ✅ Kategori berhasil diperbarui!
+          <% } else if (success === 'hapus') { %>
+            ✅ Kategori berhasil dihapus!
+          <% } %>
+        </div>
+      <% } %>
+
+      <% if (typeof error !== 'undefined') { %>
+        <div class="alert alert-error">
+          ❌ Terjadi kesalahan. Silakan coba lagi.
+        </div>
+      <% } %>
+
+      <!-- Kategori List -->
+      <div class="kategori-list">
+        <% if (kategoriList && kategoriList.length > 0) { %>
+          <% kategoriList.forEach(kategori => { %>
+            <div class="kategori-item">
+              <div class="kategori-info">
+                <div class="kategori-urutan"><%= kategori.urutan %></div>
+                <div class="kategori-detail">
+                  <h3><%= kategori.nama %></h3>
+                  <p><%= kategori.jumlah_layanan %> layanan</p>
+                </div>
+              </div>
+              <div class="kategori-actions">
+                <button class="btn-icon btn-edit" onclick="openModalEdit(<%= kategori.id %>, '<%= kategori.nama %>', <%= kategori.urutan %>)">
+                  ✏️ Edit
+                </button>
+                <button class="btn-icon btn-delete" onclick="confirmHapus(<%= kategori.id %>, '<%= kategori.nama %>')">
+                  🗑️ Hapus
+                </button>
+              </div>
+            </div>
+          <% }); %>
+        <% } else { %>
+          <div class="empty-state">
+            <div class="empty-state-icon">📂</div>
+            <h3>Belum ada kategori</h3>
+            <p>Tambahkan kategori pertama untuk mengelompokkan layanan</p>
+          </div>
+        <% } %>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 Chatbot Administrasi Desa. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <!-- Modal Tambah/Edit -->
+  <div id="modalKategori" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle">Tambah Kategori</h3>
+        <button class="modal-close" onclick="closeModal()">×</button>
+      </div>
+      <form id="formKategori" method="POST">
+        <div class="form-group">
+          <label for="nama">Nama Kategori *</label>
+          <input type="text" id="nama" name="nama" required placeholder="Contoh: Kartu Keluarga">
+        </div>
+        <div class="form-group">
+          <label for="urutan">Urutan Tampilan *</label>
+          <input type="number" id="urutan" name="urutan" required placeholder="1" min="0" value="0">
+          <p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
+            💡 Nomor urut untuk menentukan posisi kategori (0 = pertama)
+          </p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" onclick="closeModal()">Batal</button>
+          <button type="submit" class="btn-save">Simpan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    function openModalTambah() {
+      document.getElementById('modalTitle').textContent = 'Tambah Kategori';
+      document.getElementById('formKategori').action = '/kategori/tambah';
+      document.getElementById('nama').value = '';
+      document.getElementById('urutan').value = '0';
+      document.getElementById('modalKategori').classList.add('active');
+    }
+
+    function openModalEdit(id, nama, urutan) {
+      document.getElementById('modalTitle').textContent = 'Edit Kategori';
+      document.getElementById('formKategori').action = '/kategori/edit/' + id;
+      document.getElementById('nama').value = nama;
+      document.getElementById('urutan').value = urutan;
+      document.getElementById('modalKategori').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('modalKategori').classList.remove('active');
+    }
+
+    function confirmHapus(id, nama) {
+      if (confirm(`Yakin ingin menghapus kategori "${nama}"?\n\nLayanan dalam kategori ini akan tetap ada (kategori diset ke null).`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/kategori/hapus/' + id;
+        document.body.appendChild(form);
+        form.submit();
+      }
+    }
+
+    // Close modal when clicking outside
+    document.getElementById('modalKategori').addEventListener('click', function(e) {
+      if (e.target === this) {
+        closeModal();
+      }
+    });
+
+    // Close alert after 5 seconds
+    setTimeout(() => {
+      const alerts = document.querySelectorAll('.alert');
+      alerts.forEach(alert => {
+        alert.style.transition = 'opacity 0.5s';
+        alert.style.opacity = '0';
+        setTimeout(() => alert.remove(), 500);
+      });
+    }, 5000);
+  </script>
+</body>
+
+</html>

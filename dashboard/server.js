@@ -99,27 +99,27 @@ app.get('/login', (req, res) => {
 // Proses login
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
-  
+
   const admin = db.prepare('SELECT * FROM admin WHERE username = ?').get(username);
-  
+
   if (!admin) {
     return res.render('login', { error: 'Username tidak ditemukan' });
   }
-  
+
   const passwordValid = bcrypt.compareSync(password, admin.password_hash);
-  
+
   if (!passwordValid) {
     return res.render('login', { error: 'Password salah' });
   }
-  
+
   // Set session
   req.session.adminId = admin.id;
   req.session.adminUsername = admin.username;
   req.session.adminNama = admin.nama_lengkap;
-  
+
   // Update last login
   db.prepare('UPDATE admin SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(admin.id);
-  
+
   // Jika WA belum terhubung, arahkan ke bot-status untuk scan QR
   const botRow = db.prepare('SELECT status FROM bot_status WHERE id = 1').get();
   if (!botRow || botRow.status !== 'connected') {
@@ -146,7 +146,7 @@ app.get('/', requireAuth, (req, res) => {
   const totalChatHariIni = db.prepare(
     "SELECT COUNT(*) as total FROM log_chat WHERE DATE(waktu) = DATE('now')"
   ).get().total;
-  
+
   // Top 5 layanan paling banyak ditanya
   const topLayanan = db.prepare(`
     SELECT l.nama, COUNT(lc.id) as jumlah
@@ -157,7 +157,7 @@ app.get('/', requireAuth, (req, res) => {
     ORDER BY jumlah DESC
     LIMIT 5
   `).all();
-  
+
   // Chat terbaru (10 terakhir)
   const chatTerbaru = db.prepare(`
     SELECT 
@@ -171,7 +171,7 @@ app.get('/', requireAuth, (req, res) => {
     ORDER BY lc.waktu DESC
     LIMIT 10
   `).all();
-  
+
   res.render('index', {
     admin: req.session,
     stats: {
@@ -182,6 +182,83 @@ app.get('/', requireAuth, (req, res) => {
       chatTerbaru
     }
   });
+});
+
+// ===== ROUTES: KATEGORI =====
+
+// Daftar kategori
+app.get('/kategori', requireAuth, (req, res) => {
+  const kategoriList = db.prepare(`
+    SELECT k.*, COUNT(l.id) as jumlah_layanan
+    FROM kategori k
+    LEFT JOIN layanan l ON l.kategori_id = k.id
+    GROUP BY k.id
+    ORDER BY k.urutan, k.nama
+  `).all();
+
+  res.render('kategori/index', {
+    admin: req.session,
+    kategoriList,
+    success: req.query.success,
+    error: req.query.error
+  });
+});
+
+// Proses tambah kategori
+app.post('/kategori/tambah', requireAuth, (req, res) => {
+  const { nama, urutan } = req.body;
+
+  if (!nama || !nama.trim()) {
+    return res.redirect('/kategori?error=nama_required');
+  }
+
+  try {
+    db.prepare('INSERT INTO kategori (nama, urutan) VALUES (?, ?)').run(
+      nama.trim(),
+      parseInt(urutan) || 0
+    );
+    res.redirect('/kategori?success=tambah');
+  } catch (error) {
+    console.error('Error tambah kategori:', error);
+    res.redirect('/kategori?error=tambah');
+  }
+});
+
+// Proses edit kategori
+app.post('/kategori/edit/:id', requireAuth, (req, res) => {
+  const { nama, urutan } = req.body;
+
+  if (!nama || !nama.trim()) {
+    return res.redirect('/kategori?error=nama_required');
+  }
+
+  try {
+    db.prepare('UPDATE kategori SET nama = ?, urutan = ? WHERE id = ?').run(
+      nama.trim(),
+      parseInt(urutan) || 0,
+      req.params.id
+    );
+    res.redirect('/kategori?success=edit');
+  } catch (error) {
+    console.error('Error edit kategori:', error);
+    res.redirect('/kategori?error=edit');
+  }
+});
+
+// Hapus kategori
+app.post('/kategori/hapus/:id', requireAuth, (req, res) => {
+  try {
+    // Null-kan kategori_id pada layanan yang menggunakan kategori ini
+    db.prepare('UPDATE layanan SET kategori_id = NULL WHERE kategori_id = ?').run(req.params.id);
+
+    // Hapus kategori
+    db.prepare('DELETE FROM kategori WHERE id = ?').run(req.params.id);
+
+    res.redirect('/kategori?success=hapus');
+  } catch (error) {
+    console.error('Error hapus kategori:', error);
+    res.redirect('/kategori?error=hapus');
+  }
 });
 
 // ===== ROUTES: LAYANAN =====
@@ -201,7 +278,7 @@ app.get('/layanan', requireAuth, (req, res) => {
     GROUP BY l.id
     ORDER BY k.urutan, k.nama, l.nama
   `).all();
-  
+
   res.render('layanan/index', {
     admin: req.session,
     layananList
@@ -224,26 +301,26 @@ app.get('/layanan/tambah', requireAuth, (req, res) => {
 // Proses tambah layanan
 app.post('/layanan/tambah', requireAuth, (req, res) => {
   const { nama, kategori_id, syarat, sub_opsi_nama, sub_opsi_syarat } = req.body;
-  
+
   try {
     // Start transaction
     const insertLayanan = db.prepare('INSERT INTO layanan (nama, kategori_id) VALUES (?, ?)');
     const result = insertLayanan.run(nama, kategori_id || null);
     const layananId = result.lastInsertRowid;
-    
+
     // Insert syarat (jika ada)
     if (Array.isArray(syarat) && syarat.length > 0) {
       const insertSyarat = db.prepare(
         'INSERT INTO syarat (layanan_id, deskripsi, urutan) VALUES (?, ?, ?)'
       );
-      
+
       syarat.forEach((desc, index) => {
         if (desc && desc.trim()) {
           insertSyarat.run(layananId, desc.trim(), index + 1);
         }
       });
     }
-    
+
     // Insert sub-opsi (jika ada)
     if (Array.isArray(sub_opsi_nama)) {
       const insertSO = db.prepare(
@@ -252,11 +329,11 @@ app.post('/layanan/tambah', requireAuth, (req, res) => {
       const insertSS = db.prepare(
         'INSERT INTO syarat_sub_opsi (sub_opsi_id, deskripsi, urutan) VALUES (?, ?, ?)'
       );
-      
+
       sub_opsi_nama.forEach((soNama, soIndex) => {
         if (!soNama || !soNama.trim()) return;
         const soId = insertSO.run(layananId, soNama.trim(), soIndex + 1).lastInsertRowid;
-        
+
         const syaratSo = (sub_opsi_syarat && sub_opsi_syarat[soIndex]) || [];
         if (Array.isArray(syaratSo)) {
           syaratSo.forEach((desc, sIdx) => {
@@ -267,7 +344,7 @@ app.post('/layanan/tambah', requireAuth, (req, res) => {
         }
       });
     }
-    
+
     res.redirect('/layanan?success=tambah');
   } catch (error) {
     console.error('Error tambah layanan:', error);
@@ -278,19 +355,19 @@ app.post('/layanan/tambah', requireAuth, (req, res) => {
 // Form edit layanan
 app.get('/layanan/edit/:id', requireAuth, (req, res) => {
   const layanan = db.prepare('SELECT * FROM layanan WHERE id = ?').get(req.params.id);
-  
+
   if (!layanan) {
     return res.redirect('/layanan?error=notfound');
   }
-  
+
   const syaratList = db.prepare(
     'SELECT * FROM syarat WHERE layanan_id = ? ORDER BY urutan'
   ).all(req.params.id);
-  
+
   const subOpsiRows = db.prepare(
     'SELECT * FROM sub_opsi WHERE layanan_id = ? ORDER BY urutan'
   ).all(req.params.id);
-  
+
   // Ambil syarat per sub-opsi
   const stmtSyaratSub = db.prepare(
     'SELECT * FROM syarat_sub_opsi WHERE sub_opsi_id = ? ORDER BY urutan'
@@ -299,9 +376,9 @@ app.get('/layanan/edit/:id', requireAuth, (req, res) => {
     ...so,
     syaratList: stmtSyaratSub.all(so.id)
   }));
-  
+
   const kategoriList = db.prepare('SELECT id, nama FROM kategori ORDER BY urutan, nama').all();
-  
+
   res.render('layanan/form', {
     admin: req.session,
     layanan,
@@ -316,30 +393,30 @@ app.get('/layanan/edit/:id', requireAuth, (req, res) => {
 app.post('/layanan/edit/:id', requireAuth, (req, res) => {
   const { nama, kategori_id, syarat, syarat_id, sub_opsi_nama, sub_opsi_syarat } = req.body;
   const layananId = req.params.id;
-  
+
   try {
     // Update nama layanan + kategori
     db.prepare('UPDATE layanan SET nama = ?, kategori_id = ? WHERE id = ?').run(nama, kategori_id || null, layananId);
-    
+
     // Hapus semua syarat lama
     db.prepare('DELETE FROM syarat WHERE layanan_id = ?').run(layananId);
-    
+
     // Insert syarat baru
     if (Array.isArray(syarat) && syarat.length > 0) {
       const insertSyarat = db.prepare(
         'INSERT INTO syarat (layanan_id, deskripsi, urutan) VALUES (?, ?, ?)'
       );
-      
+
       syarat.forEach((desc, index) => {
         if (desc && desc.trim()) {
           insertSyarat.run(layananId, desc.trim(), index + 1);
         }
       });
     }
-    
+
     // Hapus semua sub-opsi lama (dan syarat_sub_opsi via CASCADE)
     db.prepare('DELETE FROM sub_opsi WHERE layanan_id = ?').run(layananId);
-    
+
     // Insert sub-opsi baru (jika ada)
     if (Array.isArray(sub_opsi_nama)) {
       const insertSO = db.prepare(
@@ -348,11 +425,11 @@ app.post('/layanan/edit/:id', requireAuth, (req, res) => {
       const insertSS = db.prepare(
         'INSERT INTO syarat_sub_opsi (sub_opsi_id, deskripsi, urutan) VALUES (?, ?, ?)'
       );
-      
+
       sub_opsi_nama.forEach((soNama, soIndex) => {
         if (!soNama || !soNama.trim()) return;
         const soId = insertSO.run(layananId, soNama.trim(), soIndex + 1).lastInsertRowid;
-        
+
         const syaratSo = (sub_opsi_syarat && sub_opsi_syarat[soIndex]) || [];
         if (Array.isArray(syaratSo)) {
           syaratSo.forEach((desc, sIdx) => {
@@ -363,7 +440,7 @@ app.post('/layanan/edit/:id', requireAuth, (req, res) => {
         }
       });
     }
-    
+
     res.redirect('/layanan?success=edit');
   } catch (error) {
     console.error('Error edit layanan:', error);
@@ -388,14 +465,14 @@ app.get('/riwayat', requireAuth, (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = 20;
   const offset = (page - 1) * limit;
-  
+
   // Filter tanggal
   const tanggalMulai = req.query.tanggal_mulai || '';
   const tanggalSelesai = req.query.tanggal_selesai || '';
-  
+
   let whereClause = '';
   let params = [];
-  
+
   if (tanggalMulai && tanggalSelesai) {
     whereClause = 'WHERE DATE(lc.waktu) BETWEEN ? AND ?';
     params = [tanggalMulai, tanggalSelesai];
@@ -406,12 +483,12 @@ app.get('/riwayat', requireAuth, (req, res) => {
     whereClause = 'WHERE DATE(lc.waktu) <= ?';
     params = [tanggalSelesai];
   }
-  
+
   // Query total untuk pagination
   const totalQuery = `SELECT COUNT(*) as total FROM log_chat lc ${whereClause}`;
   const total = db.prepare(totalQuery).get(...params).total;
   const totalPages = Math.ceil(total / limit);
-  
+
   // Query data
   const dataQuery = `
     SELECT 
@@ -427,9 +504,9 @@ app.get('/riwayat', requireAuth, (req, res) => {
     ORDER BY lc.waktu DESC
     LIMIT ? OFFSET ?
   `;
-  
+
   const riwayatList = db.prepare(dataQuery).all(...params, limit, offset);
-  
+
   res.render('riwayat', {
     admin: req.session,
     riwayatList,
@@ -460,7 +537,7 @@ app.get('/statistik', requireAuth, (req, res) => {
     GROUP BY l.id
     ORDER BY jumlah_pertanyaan DESC
   `).all();
-  
+
   // Statistik per hari (7 hari terakhir)
   const statsPerHari = db.prepare(`
     SELECT 
@@ -471,12 +548,12 @@ app.get('/statistik', requireAuth, (req, res) => {
     GROUP BY DATE(waktu)
     ORDER BY tanggal DESC
   `).all();
-  
+
   // Total unik nomor WA
   const totalUnikWA = db.prepare(
     'SELECT COUNT(DISTINCT nomor_wa) as total FROM log_chat'
   ).get().total;
-  
+
   res.render('statistik', {
     admin: req.session,
     statsPerLayanan,
