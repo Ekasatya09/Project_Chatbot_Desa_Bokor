@@ -1,0 +1,69 @@
+[
+  {
+    "nama": "Perbaharui Kartu Keluarga (KK)",
+    "syarat": [
+      "Kartu Keluarga (KK) lama",
+      "KTP asli kepala keluarga dan anggota keluarga yang berubah",
+      "Fotocopy KTP kepala keluarga dan anggota keluarga",
+      "Surat pengantar dari RT/RW",
+      "Dokumen pendukung perubahan (akta kelahiran, surat nikah, akta cerai, akta kematian, dll)"
+    ]
+  },
+  {
+    "nama": "KK dan KTP Hilang",
+    "syarat": [
+      "Surat keterangan kehilangan dari kepolisian",
+      "Surat pengantar dari RT/RW",
+      "Fotocopy akta kelahiran",
+      "Fotocopy Kartu Keluarga (jika ada backup/fotocopy lama)",
+      "Pas foto ukuran 3x4 (2 lembar) untuk KTP",
+      "Formulir permohonan KK dan KTP"
+    ]
+  },
+  {
+    "nama": "Akta Kematian",
+    "syarat": [
+      "Surat keterangan kematian dari dokter/rumah sakit atau surat kematian dari RT/RW",
+      "KTP asli dan fotocopy almarhum/almarhumah",
+      "Kartu Keluarga (KK) asli dan fotocopy",
+      "KTP dan Kartu Keluarga pelapor (ahli waris/keluarga)",
+      "Surat pengantar dari RT/RW",
+      "Fotocopy akta nikah (jika sudah menikah)"
+    ]
+  },
+  {
+    "nama": "Akta Kelahiran",
+    "syarat": [
+      "Surat keterangan kelahiran dari dokter/bidan/rumah sakit",
+      "KTP asli dan fotocopy kedua orang tua",
+      "Kartu Keluarga (KK) asli dan fotocopy",
+      "Fotocopy akta nikah/buku nikah orang tua",
+      "Surat pengantar dari RT/RW",
+      "Formulir permohonan akta kelahiran",
+      "Saksi kelahiran (jika diperlukan): KTP 2 orang saksi"
+    ]
+  },
+  {
+    "nama": "Pindah Domisili",
+    "syarat": [
+      "Surat pengantar pindah dari RT/RW asal",
+      "KTP asli dan fotocopy kepala keluarga",
+      "Kartu Keluarga (KK) asli dan fotocopy",
+      "Surat keterangan pindah dari kelurahan/desa asal",
+      "Surat pernyataan bertanggung jawab dari kepala keluarga",
+      "Surat keterangan dari RT/RW tujuan (menerima warga baru)",
+      "Dokumen kepemilikan/kontrak rumah di tempat tujuan"
+    ]
+  },
+  {
+    "nama": "Kartu Identitas Anak (KIA)",
+    "syarat": [
+      "Fotocopy akta kelahiran anak",
+      "Kartu Keluarga (KK) asli dan fotocopy",
+      "KTP asli dan fotocopy kedua orang tua",
+      "Pas foto anak ukuran 2x3 (2 lembar)",
+      "Surat pengantar dari RT/RW",
+      "Formulir permohonan KIA"
+    ]
+  }
+]

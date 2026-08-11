@@ -1,0 +1,36 @@
+{
+  "name": "chatbot-administrasi-desa",
+  "version": "1.0.0",
+  "description": "Chatbot WhatsApp rule-based untuk administrasi desa menggunakan Baileys",
+  "main": "bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node dashboard/server.js",
+    "bot-only": "node bot.js",
+    "migrate": "node db/migrate-from-json.js",
+    "migrate:livechat": "node db/migrate-livechat.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "chatbot",
+    "baileys",
+    "administrasi-desa"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.8",
+    "bcrypt": "^5.1.1",
+    "better-sqlite3": "^13.0.2",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "ejs": "^3.1.9",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "pino": "^8.19.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "string-similarity": "^4.0.4"
+  }
+}

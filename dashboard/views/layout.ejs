@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>
+    <%= typeof title !=='undefined' ? title + ' - ' : '' %>Dashboard Chatbot Desa
+  </title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+  <% if (typeof admin !=='undefined' && admin.adminId) { %>
+    <!-- Navbar -->
+    <nav class="navbar">
+      <div class="container">
+        <div class="navbar-brand">
+          <h1>🏛️ Dashboard Chatbot Desa</h1>
+        </div>
+        <ul class="navbar-menu">
+          <li><a href="/">Dashboard</a></li>
+          <li><a href="/layanan">Layanan</a></li>
+          <li><a href="/riwayat">Riwayat Chat</a></li>
+          <li><a href="/statistik">Statistik</a></li>
+          <li><a href="/live-chat">Live Chat</a></li>
+          <li><a href="/bot-status">Status Bot</a></li>
+        </ul>
+        <div class="navbar-user">
+          <span>👤 <%= admin.adminNama || admin.adminUsername %></span>
+          <a href="/logout" class="btn-logout">Logout</a>
+        </div>
+      </div>
+    </nav>
+    <% } %>
+
+      <!-- Main Content -->
+      <main class="main-content">
+        <div class="container">
+          <%- body %>
+        </div>
+      </main>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <div class="container">
+          <p>&copy; 2026 Chatbot Administrasi Desa. All rights reserved.</p>
+        </div>
+      </footer>
+
+      <script src="/js/script.js"></script>
+</body>
+
+</html>
