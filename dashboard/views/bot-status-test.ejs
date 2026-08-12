@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Test - Bot Status</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .test-section {
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 5px;
+    }
+    #qrImage {
+      max-width: 300px;
+      border: 2px solid #333;
+      border-radius: 8px;
+    }
+    pre {
+      background: #f5f5f5;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧪 QR Code Test Page</h1>
+  
+  <div class="test-section">
+    <h2>1. Check Bot Status</h2>
+    <button onclick="checkStatus()">Get Bot Status</button>
+    <pre id="statusResult">Click button to check...</pre>
+  </div>
+  
+  <div class="test-section">
+    <h2>2. Get QR Code</h2>
+    <button onclick="getQR()">Fetch QR Code</button>
+    <pre id="qrResult">Click button to fetch...</pre>
+    <div id="qrDisplay"></div>
+  </div>
+  
+  <div class="test-section">
+    <h2>3. Console Logs</h2>
+    <button onclick="clearLogs()">Clear Logs</button>
+    <pre id="logs"></pre>
+  </div>
+  
+  <script>
+    function log(msg) {
+      const logsEl = document.getElementById('logs');
+      const timestamp = new Date().toLocaleTimeString();
+      logsEl.textContent += `[${timestamp}] ${msg}\n`;
+      console.log(msg);
+    }
+    
+    function clearLogs() {
+      document.getElementById('logs').textContent = '';
+    }
+    
+    async function checkStatus() {
+      log('Fetching /api/bot/status...');
+      try {
+        const res = await fetch('/api/bot/status', { credentials: 'include' });
+        const data = await res.json();
+        document.getElementById('statusResult').textContent = JSON.stringify(data, null, 2);
+        log('Status fetched: ' + data.status);
+      } catch (e) {
+        log('ERROR: ' + e.message);
+        document.getElementById('statusResult').textContent = 'Error: ' + e.message;
+      }
+    }
+    
+    async function getQR() {
+      log('Fetching /api/bot/qr...');
+      document.getElementById('qrDisplay').innerHTML = '<p>Loading...</p>';
+      
+      try {
+        const res = await fetch('/api/bot/qr', { credentials: 'include' });
+        const data = await res.json();
+        
+        document.getElementById('qrResult').textContent = JSON.stringify({
+          status: data.status,
+          hasQR: !!data.qr,
+          qrLength: data.qr ? data.qr.length : 0,
+          error: data.error
+        }, null, 2);
+        
+        if (data.qr) {
+          log('QR received! Length: ' + data.qr.length);
+          document.getElementById('qrDisplay').innerHTML = `
+            <h3>QR Code:</h3>
+            <img id="qrImage" src="${data.qr}" alt="QR Code">
+          `;
+        } else {
+          log('No QR in response. Status: ' + data.status);
+          document.getElementById('qrDisplay').innerHTML = '<p>No QR code available</p>';
+        }
+      } catch (e) {
+        log('ERROR: ' + e.message);
+        document.getElementById('qrResult').textContent = 'Error: ' + e.message;
+        document.getElementById('qrDisplay').innerHTML = '<p style="color:red;">Error: ' + e.message + '</p>';
+      }
+    }
+    
+    // Auto-check on load
+    window.addEventListener('load', () => {
+      log('Page loaded');
+      checkStatus();
+    });
+  </script>
+</body>
+</html>

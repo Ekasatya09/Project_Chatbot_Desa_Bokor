@@ -382,6 +382,13 @@
                           📲 Hubungkan WhatsApp
                         </button>
 
+                        <!-- Tombol Force Load QR (untuk debugging) -->
+                        <button class="btn-reset" id="btnForceQR"
+                          style="display:<%= botStatus === 'connecting' ? 'inline-block' : 'none' %>; background: #3b82f6;"
+                          onclick="forceLoadQR()">
+                          🔄 Force Load QR
+                        </button>
+
                         <!-- Tombol Reset (muncul saat connecting atau connected) -->
                         <button class="btn-reset" id="btnReset"
                           style="display:<%= botStatus !== 'disconnected' ? 'inline-block' : 'none' %>"
@@ -448,6 +455,7 @@
           const btnConnect = document.getElementById('btnConnect');
           const btnReset = document.getElementById('btnReset');
           const btnHapus = document.getElementById('btnHapusWA');
+          const btnForceQR = document.getElementById('btnForceQR');
 
           // Reset kelas badge/dot
           badge.className = 'status-badge ' + status;
@@ -474,9 +482,11 @@
             infoBtn.textContent = 'Reset akan memulai ulang proses koneksi WhatsApp';
             scanSteps.style.display = 'block';
             btnConnect.style.display = 'none';
+            btnForceQR.style.display = 'inline-block';
             btnReset.style.display = 'inline-block';
             btnHapus.style.display = 'none';
             // Load QR
+            console.log('🔄 setStatusUI: calling loadQR()');
             loadQR();
 
           } else {
@@ -487,6 +497,7 @@
             infoBtn.textContent = '';
             scanSteps.style.display = 'none';
             btnConnect.style.display = 'flex';
+            btnForceQR.style.display = 'none';
             btnReset.style.display = 'none';
             btnHapus.style.display = 'none';
           }
@@ -494,27 +505,64 @@
 
         async function loadQR() {
           const qrWrapper = document.getElementById('qrWrapper');
-          const data = await fetchQR();
-          if (!data) return;
+          console.log('🔄 loadQR() called');
 
-          if (data.qr && data.status === 'connecting') {
+          try {
+            console.log('📡 Fetching /api/bot/qr...');
+            const data = await fetchQR();
+            console.log('📥 QR Response:', {
+              hasData: !!data,
+              status: data?.status,
+              hasQR: !!data?.qr,
+              qrLength: data?.qr?.length,
+              error: data?.error
+            });
+
+            if (!data) {
+              console.warn('⚠️ Tidak ada response dari /api/bot/qr');
+              qrWrapper.innerHTML = `
+                <div class="qr-spinner"></div>
+                <div style="color:#ef4444;padding:0.5rem;font-size:0.9rem;">⚠️ Tidak ada response dari server</div>
+              `;
+              return;
+            }
+
+            if (data.qr && data.status === 'connecting') {
+              console.log('✅ QR Code received! Displaying...');
+              qrWrapper.innerHTML = `
+                <img src="${data.qr}" alt="QR Code WhatsApp" style="border-radius:8px;max-width:260px;">
+                <div style="font-size:0.8rem;color:#64748b;margin-top:0.5rem;">
+                  Scan dengan WhatsApp → Perangkat Tertaut → Tautkan Perangkat
+                </div>
+              `;
+            } else if (data.status === 'connecting') {
+              console.log('⏳ Status connecting but no QR yet');
+              // QR belum siap atau error generate
+              qrWrapper.innerHTML = `
+                <div class="qr-spinner"></div>
+                <div style="color:#64748b;padding:0.5rem;font-size:0.9rem;">⏳ Menunggu QR dari server...</div>
+                ${data.error ? `<div style="color:#ef4444;font-size:0.75rem;margin-top:0.5rem;">Error: ${data.error}</div>` : ''}
+              `;
+            } else if (data.status === 'disconnected') {
+              console.log('📵 Status disconnected');
+              qrWrapper.innerHTML = '<div style="font-size:3rem;">📵</div><div style="color:#64748b;">WhatsApp belum terhubung.<br>Klik <strong>Hubungkan WhatsApp</strong> untuk mulai.</div>';
+            } else if (data.status === 'connected') {
+              console.log('✅ Status connected');
+              qrWrapper.innerHTML = '<div style="font-size:3rem;">✅</div><div style="font-weight:600;color:#065f46;">Bot aktif dan siap menerima pesan!</div>';
+            }
+          } catch (err) {
+            console.error('❌ Error loading QR:', err);
             qrWrapper.innerHTML = `
-        <img src="${data.qr}" alt="QR Code WhatsApp" style="border-radius:8px;max-width:260px;">
-        <div style="font-size:0.8rem;color:#64748b;margin-top:0.5rem;">
-          Scan dengan WhatsApp → Perangkat Tertaut → Tautkan Perangkat
-        </div>
-      `;
-          } else if (data.status === 'connecting') {
-            qrWrapper.innerHTML = `
-        <div class="qr-spinner"></div>
-        <div style="color:#64748b;padding:0.5rem;font-size:0.9rem;">⏳ Menunggu QR dari server...</div>
-      `;
+              <div class="qr-spinner"></div>
+              <div style="color:#ef4444;padding:0.5rem;font-size:0.9rem;">⚠️ Error: ${err.message}</div>
+            `;
           }
         }
 
         // ── Polling status setiap 3 detik ─────────────────────────────
         let lastStatus = '<%= botStatus %>';
         let qrRefreshCount = 0;
+        let isLoadingQR = false; // Prevent multiple simultaneous QR loads
 
         async function pollStatus() {
           const data = await fetchBotStatus();
@@ -525,29 +573,44 @@
             setStatusUI(data.status, data.wa_nomor);
             if (data.status === 'connected') {
               toast('✅ Bot berhasil terhubung ke WhatsApp!');
+              qrRefreshCount = 0;
+              isLoadingQR = false;
             } else if (data.status === 'disconnected') {
               toast('⚠️ Bot terputus dari WhatsApp.');
+              qrRefreshCount = 0;
+              isLoadingQR = false;
             }
           }
 
-          // Refresh QR setiap 6 detik saat connecting
+          // Refresh QR setiap 9 detik saat connecting (setiap 3 poll)
           if (data.status === 'connecting') {
             qrRefreshCount++;
-            if (qrRefreshCount % 2 === 0) loadQR();
+            // Load QR setiap 9 detik, dan hanya jika tidak sedang loading
+            if (qrRefreshCount % 3 === 0 && !isLoadingQR) {
+              isLoadingQR = true;
+              await loadQR();
+              isLoadingQR = false;
+            }
           } else {
             qrRefreshCount = 0;
+            isLoadingQR = false;
           }
         }
 
         // Mulai polling
         if ('<%= botStatus %>' === 'connecting') {
-          setTimeout(loadQR, 800);
+          console.log('🟡 Initial status is connecting, loading QR immediately...');
+          setTimeout(async () => {
+            isLoadingQR = true;
+            await loadQR();
+            isLoadingQR = false;
+          }, 500); // Load setelah 500ms
         }
         setInterval(pollStatus, 3000);
 
         // ── Auto-connect saat halaman dibuka pertama kali ───────────────
         // Jika status disconnected (termasuk redirect dari login), langsung mulai koneksi
-        const _autoconnect = <% - JSON.stringify(autoconnect) %>;
+        const _autoconnect = <%- JSON.stringify(autoconnect) %>;
         if ('<%= botStatus %>' === 'disconnected') {
           // Tampilkan spinner dulu
           setStatusUI('connecting', null);
@@ -595,6 +658,15 @@
             btn.disabled = false;
             btn.innerHTML = '📲 Hubungkan WhatsApp';
           }
+        }
+
+        // ── Force Load QR (untuk debugging) ──────────────────────────────
+        async function forceLoadQR() {
+          console.log('🔨 Force loading QR...');
+          toast('🔄 Memuat ulang QR code...');
+          isLoadingQR = true;
+          await loadQR();
+          isLoadingQR = false;
         }
 
         // ── Reset WhatsApp ─────────────────────────────────────────────

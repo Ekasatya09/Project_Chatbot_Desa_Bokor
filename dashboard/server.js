@@ -1041,6 +1041,11 @@ app.get('/bot-status', requireAuth, async (req, res) => {
   });
 });
 
+// Test page untuk QR (development only)
+app.get('/bot-status/test', requireAuth, (req, res) => {
+  res.render('bot-status-test');
+});
+
 // API: Status bot (polling)
 app.get('/api/bot/status', apiAuth, (req, res) => {
   const botRow = db.prepare('SELECT * FROM bot_status WHERE id = 1').get();
@@ -1051,6 +1056,29 @@ app.get('/api/bot/status', apiAuth, (req, res) => {
   });
 });
 
+// API: Hubungkan bot (start connection)
+app.post('/api/bot/connect', apiAuth, async (req, res) => {
+  try {
+    const botRow = db.prepare('SELECT status FROM bot_status WHERE id = 1').get();
+
+    // Jika sudah connecting atau connected, tidak perlu start lagi
+    if (botRow && (botRow.status === 'connecting' || botRow.status === 'connected')) {
+      return res.json({
+        ok: true,
+        message: 'Bot sudah dalam proses koneksi atau sudah terhubung',
+        status: botRow.status
+      });
+    }
+
+    console.log('📲 Memulai koneksi WhatsApp dari dashboard...');
+    await startBot(db);
+    res.json({ ok: true, message: 'Koneksi dimulai. Tunggu QR code...' });
+  } catch (e) {
+    console.error('❌ Gagal start bot:', e.message);
+    res.status(500).json({ error: 'Gagal memulai koneksi: ' + e.message });
+  }
+});
+
 // API: QR Code sebagai data URL (base64 PNG)
 app.get('/api/bot/qr', apiAuth, async (req, res) => {
   const botRow = db.prepare('SELECT qr_string, status FROM bot_status WHERE id = 1').get();
@@ -1058,13 +1086,24 @@ app.get('/api/bot/qr', apiAuth, async (req, res) => {
     return res.json({ qr: null, status: botRow?.status || 'disconnected' });
   }
   try {
-    const qrDataUrl = await QRCode.toDataURL(botRow.qr_string, {
-      width: 300, margin: 2,
+    // Set timeout untuk QR generation (max 5 detik)
+    const qrPromise = QRCode.toDataURL(botRow.qr_string, {
+      width: 300,
+      margin: 2,
+      errorCorrectionLevel: 'M',
       color: { dark: '#1e293b', light: '#ffffff' }
     });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('QR generation timeout')), 5000)
+    );
+
+    const qrDataUrl = await Promise.race([qrPromise, timeoutPromise]);
     res.json({ qr: qrDataUrl, status: 'connecting' });
   } catch (e) {
-    res.status(500).json({ error: 'Gagal generate QR' });
+    console.error('❌ Gagal generate QR:', e.message);
+    // Return null QR but keep status connecting so frontend retries
+    res.json({ qr: null, status: 'connecting', error: e.message });
   }
 });
 
@@ -1077,6 +1116,18 @@ app.post('/api/bot/reset', apiAuth, async (req, res) => {
   } catch (e) {
     console.error('❌ Reset gagal:', e.message);
     res.status(500).json({ error: 'Reset gagal: ' + e.message });
+  }
+});
+
+// API: Disconnect / Stop bot (tanpa hapus auth)
+app.post('/api/bot/disconnect', apiAuth, async (req, res) => {
+  try {
+    console.log('🛑 Disconnect WhatsApp diminta dari dashboard...');
+    await stopBot();
+    res.json({ ok: true, message: 'Bot diputuskan. Auth info masih tersimpan untuk koneksi ulang.' });
+  } catch (e) {
+    console.error('❌ Disconnect gagal:', e.message);
+    res.status(500).json({ error: 'Disconnect gagal: ' + e.message });
   }
 });
 
